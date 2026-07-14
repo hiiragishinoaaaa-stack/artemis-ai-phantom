@@ -68,9 +68,9 @@ MIN_MARKET_CAP_SOL_FOR_SCORE = _env_float("MIN_MARKET_CAP_SOL_FOR_SCORE", 15.0)
 # score >= WATCH_SCORE_THRESHOLD: ⚠ WATCH(Discord通常通知)
 # score >= LOW_SCORE_THRESHOLD: ログ保存のみ(Discordへは送らない)
 # score < LOW_SCORE_THRESHOLD: 何もしない(デバッグログにのみ理由を残す)
-HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 90)
-WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 80)
-LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 70)
+HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 85)
+WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 75)
+LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 65)
 
 # --- 通知後の結果トラッキング(outcome_tracker.py) ---
 # WATCH/HIGHとして通知したトークンは、それ以降もこの秒数リストの経過時点
