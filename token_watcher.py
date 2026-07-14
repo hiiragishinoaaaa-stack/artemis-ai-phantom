@@ -1,8 +1,10 @@
-"""新規トークンの初動観察・フィルター判定ロジック。
+"""新規トークンの初動観察・チェックポイント管理ロジック。
 
 PumpPortalから届くイベント(トークン作成・売買)を受け取り、
-OBSERVATION_WINDOW_SECONDS秒だけ様子を見た上で、MIN_BUY_COUNT等の条件を
-満たしたものだけを「通知対象」として返す。
+config.EVALUATION_CHECKPOINTS_SECONDS(既定20/40/60/90/120秒)の各時点で
+繰り返しスコア再計算ができるよう状態を保持する。実際のスコア計算は
+scoring.pyが独立して担当し、このモジュールは「いつ・どのトークンを
+再評価すべきか」の管理のみを行う。
 
 このモジュールはネットワーク・WebSocket・時刻取得(time.time())に一切
 依存しない(呼び出し側が現在時刻を明示的に渡す)。そのためMT5に依存しない
@@ -30,11 +32,19 @@ class TrackedToken:
     buy_count: int = 0
     sell_count: int = 0
     unique_buyers: set[str] = field(default_factory=set)
-    evaluated: bool = False
+    total_volume_sol: float = 0.0
+    # config.EVALUATION_CHECKPOINTS_SECONDSのうち、次に処理すべきチェックポイント
+    # のインデックス(0=20秒地点、1=40秒地点、...)。最後のチェックポイントまで
+    # 処理し終えるとfinished=Trueになる。
+    checkpoint_index: int = 0
+    finished: bool = False
+    # これまでに通知した最高の通知レベル("LOW"/"WATCH"/"HIGH"またはNone)。
+    # スコアが上昇して通知ラインを更新した瞬間だけ再通知するために使う。
+    notified_tier: str | None = None
 
 
 class TokenWatcher:
-    """新規トークンを観察し、フィルターを通過したものを判定するクラス。"""
+    """新規トークンを観察し、チェックポイントごとの再評価対象を管理するクラス。"""
 
     def __init__(self) -> None:
         self._tokens: dict[str, TrackedToken] = {}
@@ -76,7 +86,14 @@ class TokenWatcher:
         self._evict_oldest_if_over_capacity()
         return token
 
-    def on_trade(self, mint: str, tx_type: str, trader: str, market_cap_sol: float) -> None:
+    def on_trade(
+        self,
+        mint: str,
+        tx_type: str,
+        trader: str,
+        market_cap_sol: float,
+        sol_amount: float = 0.0,
+    ) -> None:
         """PumpPortalのtxType="buy"/"sell"イベントを受けて観察中トークンの状態を更新する。
 
         観察対象外(既に忘れた・そもそも知らない)mintのイベントは無視する。
@@ -90,41 +107,37 @@ class TokenWatcher:
             token.unique_buyers.add(trader)
         elif tx_type == "sell":
             token.sell_count += 1
+        token.total_volume_sol += sol_amount
         token.last_market_cap_sol = market_cap_sol
 
-    def due_for_evaluation(self, now: float) -> list[TrackedToken]:
-        """観察期間(OBSERVATION_WINDOW_SECONDS秒)が経過し、まだ判定していない
+    def due_for_checkpoint(self, now: float) -> list[TrackedToken]:
+        """次のチェックポイント時刻を過ぎ、まだそのチェックポイントを処理していない
         トークンの一覧を返す(呼び出し側が定期的にポーリングする想定)。
         """
-        return [
-            t
-            for t in self._tokens.values()
-            if not t.evaluated and now - t.created_at >= config.OBSERVATION_WINDOW_SECONDS
-        ]
+        due = []
+        for token in self._tokens.values():
+            if token.finished:
+                continue
+            checkpoint_seconds = config.EVALUATION_CHECKPOINTS_SECONDS[token.checkpoint_index]
+            if now - token.created_at >= checkpoint_seconds:
+                due.append(token)
+        return due
 
-    def evaluate(self, token: TrackedToken) -> bool:
-        """観察終了時に1回呼び出し、フィルター条件を満たすか判定する。
+    def current_checkpoint_seconds(self, token: TrackedToken) -> int:
+        """このトークンが今まさに処理しようとしているチェックポイント(経過秒)。"""
+        return config.EVALUATION_CHECKPOINTS_SECONDS[token.checkpoint_index]
 
-        条件(config.py参照):
-        - 買い件数がMIN_BUY_COUNT以上
-        - ユニークな買い手がMIN_UNIQUE_BUYERS以上
-        - 売り件数が買い件数×MAX_SELL_TO_BUY_RATIOを超えていない
-        - (MIN_MARKET_CAP_SOL>0の場合)時価総額がその値以上
+    def mark_checkpoint_done(self, token: TrackedToken) -> None:
+        """チェックポイント処理後に1回呼び出し、次のチェックポイントへ進める。
+
+        最後のチェックポイント(既定120秒)を処理し終えたらfinished=Trueにする。
         """
-        token.evaluated = True
-
-        if token.buy_count < config.MIN_BUY_COUNT:
-            return False
-        if len(token.unique_buyers) < config.MIN_UNIQUE_BUYERS:
-            return False
-        if token.sell_count > token.buy_count * config.MAX_SELL_TO_BUY_RATIO:
-            return False
-        if config.MIN_MARKET_CAP_SOL > 0 and token.last_market_cap_sol < config.MIN_MARKET_CAP_SOL:
-            return False
-        return True
+        token.checkpoint_index += 1
+        if token.checkpoint_index >= len(config.EVALUATION_CHECKPOINTS_SECONDS):
+            token.finished = True
 
     def forget(self, mint: str) -> None:
-        """観察を終了し、状態を破棄する(評価後、購読解除とセットで呼ぶ)。"""
+        """観察を終了し、状態を破棄する(全チェックポイント処理後、購読解除とセットで呼ぶ)。"""
         self._tokens.pop(mint, None)
 
     def _evict_oldest_if_over_capacity(self) -> None:

@@ -45,23 +45,41 @@ PUMPPORTAL_WS_URL = os.getenv("PUMPPORTAL_WS_URL", "wss://pumpportal.fun/api/dat
 # WebSocketが切断された場合に再接続を試みるまでの待機秒数。
 RECONNECT_DELAY_SECONDS = _env_int("RECONNECT_DELAY_SECONDS", 5)
 
-# --- 初動観察・フィルター条件(token_watcher.py) ---
-# 新規トークン作成を検知してから、この秒数だけ売買を観察してから判定する
-# (即時通知ではなく、多少の初動データを見てから絞り込む)。
-OBSERVATION_WINDOW_SECONDS = _env_int("OBSERVATION_WINDOW_SECONDS", 45)
-# 観察期間中の買い(buy)件数がこれ未満なら通知しない。
-MIN_BUY_COUNT = _env_int("MIN_BUY_COUNT", 5)
-# 観察期間中のユニークな買い手(traderPublicKeyの重複除外)がこれ未満なら
-# 通知しない(同一アドレスの自作自演連続買いだけで件数を稼ぐケースを除外)。
-MIN_UNIQUE_BUYERS = _env_int("MIN_UNIQUE_BUYERS", 3)
-# 観察期間中の売り件数が「買い件数×この倍率」を超えたら通知しない
-# (作成直後から売り優勢=初動で投げ売りされている=避けたい状態)。
-MAX_SELL_TO_BUY_RATIO = _env_float("MAX_SELL_TO_BUY_RATIO", 1.0)
-# 観察終了時点の時価総額(SOL建て)がこれ未満なら通知しない。0以下で無効。
-MIN_MARKET_CAP_SOL = _env_float("MIN_MARKET_CAP_SOL", 0.0)
+# --- 初動観察・スコアリング(token_watcher.py / scoring.py) ---
+# 「条件を全部満たさなければ即破棄」ではなく、100点満点のスコア方式で
+# 評価する。新規トークン作成を検知してから、以下の秒数(created_atからの
+# 経過秒)ごとに繰り返しスコアを再計算し、その時点でスコアが通知ライン
+# (WATCH_SCORE_THRESHOLD以上)を超えた瞬間に通知する。最後の秒数
+# (リストの最大値)で観察を打ち切る。
+EVALUATION_CHECKPOINTS_SECONDS: tuple[int, ...] = (20, 40, 60, 90, 120)
 # 同時に観察できるトークン数の上限(メモリ・購読数の暴走防止)。
 # これを超えた場合、最も古い(作成が古い)ものから観察を打ち切る。
 MAX_TRACKED_TOKENS = _env_int("MAX_TRACKED_TOKENS", 500)
+
+# --- スコアリングの閾値(scoring.py) ---
+# Volumeが一定以上(SOL建て、買い+売りの合計)なら加点する。
+MIN_VOLUME_SOL_FOR_SCORE = _env_float("MIN_VOLUME_SOL_FOR_SCORE", 5.0)
+# 時価総額(SOL建て)がこれ未満だと加点しない(極端に低い=誰も相手にして
+# いない可能性が高い)。
+MIN_MARKET_CAP_SOL_FOR_SCORE = _env_float("MIN_MARKET_CAP_SOL_FOR_SCORE", 15.0)
+
+# --- 通知レベルのスコア閾値 ---
+# score >= HIGH_SCORE_THRESHOLD: 🚨 HIGH PRIORITY(Discord + スマホ通知推奨)
+# score >= WATCH_SCORE_THRESHOLD: ⚠ WATCH(Discord通常通知)
+# score >= LOW_SCORE_THRESHOLD: ログ保存のみ(Discordへは送らない)
+# score < LOW_SCORE_THRESHOLD: 何もしない(デバッグログにのみ理由を残す)
+HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 90)
+WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 80)
+LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 70)
+
+# --- 通知後の結果トラッキング(outcome_tracker.py) ---
+# WATCH/HIGHとして通知したトークンは、それ以降もこの秒数リストの経過時点
+# ごとに時価総額を記録し、通知時点からの変化率をlogs/outcomes.jsonlへ
+# 追記する(将来、どのスコア項目が実際に有効だったか分析するため)。
+# 最後の秒数(既定24時間)を過ぎたら追跡を終了する。
+OUTCOME_CHECKPOINTS_SECONDS: tuple[int, ...] = (1800, 3600, 86400)  # 30分/1時間/24時間
+_outcomes_file_path_env = os.getenv("OUTCOMES_FILE_PATH")
+OUTCOMES_FILE_PATH = Path(_outcomes_file_path_env) if _outcomes_file_path_env else BASE_DIR / "logs" / "outcomes.jsonl"
 
 # --- Discord通知 ---
 DISCORD_ENABLED = _env_bool("DISCORD_ENABLED", False)

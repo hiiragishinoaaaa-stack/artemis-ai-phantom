@@ -8,12 +8,8 @@ from token_watcher import TokenWatcher
 
 
 @pytest.fixture(autouse=True)
-def _patch_filter_config(monkeypatch):
-    monkeypatch.setattr(config, "OBSERVATION_WINDOW_SECONDS", 45)
-    monkeypatch.setattr(config, "MIN_BUY_COUNT", 5)
-    monkeypatch.setattr(config, "MIN_UNIQUE_BUYERS", 3)
-    monkeypatch.setattr(config, "MAX_SELL_TO_BUY_RATIO", 1.0)
-    monkeypatch.setattr(config, "MIN_MARKET_CAP_SOL", 0.0)
+def _patch_config(monkeypatch):
+    monkeypatch.setattr(config, "EVALUATION_CHECKPOINTS_SECONDS", (20, 40, 60, 90, 120))
     monkeypatch.setattr(config, "MAX_TRACKED_TOKENS", 500)
 
 
@@ -28,6 +24,9 @@ def test_on_token_created_starts_tracking():
     token = _create(watcher)
     assert watcher.get("MINT1") is token
     assert len(watcher) == 1
+    assert token.checkpoint_index == 0
+    assert token.finished is False
+    assert token.notified_tier is None
 
 
 def test_on_token_created_is_idempotent_for_same_mint():
@@ -38,17 +37,18 @@ def test_on_token_created_is_idempotent_for_same_mint():
     assert len(watcher) == 1
 
 
-def test_on_trade_updates_buy_and_unique_buyers():
+def test_on_trade_updates_buy_unique_buyers_and_volume():
     watcher = TokenWatcher()
     _create(watcher)
-    watcher.on_trade("MINT1", "buy", "buyerA", market_cap_sol=12.0)
-    watcher.on_trade("MINT1", "buy", "buyerA", market_cap_sol=13.0)  # 同一アドレスの2回目
-    watcher.on_trade("MINT1", "buy", "buyerB", market_cap_sol=14.0)
+    watcher.on_trade("MINT1", "buy", "buyerA", market_cap_sol=12.0, sol_amount=1.0)
+    watcher.on_trade("MINT1", "buy", "buyerA", market_cap_sol=13.0, sol_amount=0.5)  # 同一アドレスの2回目
+    watcher.on_trade("MINT1", "buy", "buyerB", market_cap_sol=14.0, sol_amount=2.0)
 
     token = watcher.get("MINT1")
     assert token.buy_count == 3
     assert len(token.unique_buyers) == 2  # buyerAは1人としてカウント
     assert token.last_market_cap_sol == 14.0
+    assert token.total_volume_sol == pytest.approx(3.5)
 
 
 def test_on_trade_ignores_unknown_mint():
@@ -57,76 +57,45 @@ def test_on_trade_ignores_unknown_mint():
     assert len(watcher) == 0
 
 
-def test_due_for_evaluation_respects_observation_window():
+def test_due_for_checkpoint_respects_first_checkpoint():
     watcher = TokenWatcher()
     _create(watcher, now=1000.0)
 
-    assert watcher.due_for_evaluation(now=1010.0) == []  # まだ10秒しか経ってない
-    due = watcher.due_for_evaluation(now=1046.0)  # 46秒経過
+    assert watcher.due_for_checkpoint(now=1010.0) == []  # まだ10秒しか経ってない
+    due = watcher.due_for_checkpoint(now=1021.0)  # 21秒経過(20秒チェックポイント到達)
     assert len(due) == 1
     assert due[0].mint == "MINT1"
 
 
-def test_due_for_evaluation_excludes_already_evaluated():
+def test_due_for_checkpoint_excludes_finished_tokens():
     watcher = TokenWatcher()
     token = _create(watcher, now=1000.0)
-    watcher.evaluate(token)
+    for _ in range(len(config.EVALUATION_CHECKPOINTS_SECONDS)):
+        watcher.mark_checkpoint_done(token)
 
-    assert watcher.due_for_evaluation(now=1046.0) == []
+    assert token.finished is True
+    assert watcher.due_for_checkpoint(now=2000.0) == []
 
 
-def test_evaluate_passes_when_all_conditions_met():
+def test_current_checkpoint_seconds_advances():
     watcher = TokenWatcher()
-    _create(watcher)
-    for i in range(5):
-        watcher.on_trade("MINT1", "buy", f"buyer{i}", market_cap_sol=10.0 + i)
+    token = _create(watcher, now=1000.0)
+    assert watcher.current_checkpoint_seconds(token) == 20
 
-    token = watcher.get("MINT1")
-    assert watcher.evaluate(token) is True
-    assert token.evaluated is True
+    watcher.mark_checkpoint_done(token)
+    assert token.checkpoint_index == 1
+    assert watcher.current_checkpoint_seconds(token) == 40
 
 
-def test_evaluate_fails_when_buy_count_too_low():
+def test_mark_checkpoint_done_marks_finished_after_last_checkpoint():
     watcher = TokenWatcher()
-    _create(watcher)
-    for i in range(4):  # MIN_BUY_COUNT=5未満
-        watcher.on_trade("MINT1", "buy", f"buyer{i}", market_cap_sol=10.0)
+    token = _create(watcher, now=1000.0)
+    for expected_seconds in config.EVALUATION_CHECKPOINTS_SECONDS:
+        assert watcher.current_checkpoint_seconds(token) == expected_seconds
+        assert token.finished is False
+        watcher.mark_checkpoint_done(token)
 
-    token = watcher.get("MINT1")
-    assert watcher.evaluate(token) is False
-
-
-def test_evaluate_fails_when_unique_buyers_too_low():
-    watcher = TokenWatcher()
-    _create(watcher)
-    for _ in range(5):  # 買い件数は5だが全部同じアドレス
-        watcher.on_trade("MINT1", "buy", "sameBuyer", market_cap_sol=10.0)
-
-    token = watcher.get("MINT1")
-    assert watcher.evaluate(token) is False
-
-
-def test_evaluate_fails_when_sell_pressure_too_high():
-    watcher = TokenWatcher()
-    _create(watcher)
-    for i in range(5):
-        watcher.on_trade("MINT1", "buy", f"buyer{i}", market_cap_sol=10.0)
-    for _ in range(6):  # 売り件数(6)が買い件数(5)×1.0を超える
-        watcher.on_trade("MINT1", "sell", "someone", market_cap_sol=8.0)
-
-    token = watcher.get("MINT1")
-    assert watcher.evaluate(token) is False
-
-
-def test_evaluate_respects_min_market_cap(monkeypatch):
-    monkeypatch.setattr(config, "MIN_MARKET_CAP_SOL", 50.0)
-    watcher = TokenWatcher()
-    _create(watcher)
-    for i in range(5):
-        watcher.on_trade("MINT1", "buy", f"buyer{i}", market_cap_sol=20.0)  # 50未満のまま
-
-    token = watcher.get("MINT1")
-    assert watcher.evaluate(token) is False
+    assert token.finished is True
 
 
 def test_forget_removes_token():
