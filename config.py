@@ -93,12 +93,12 @@ MIN_VOLUME_USD_FOR_SCORE = _env_float("MIN_VOLUME_USD_FOR_SCORE", 300.0)
 MIN_LIQUIDITY_USD_FOR_SCORE = _env_float("MIN_LIQUIDITY_USD_FOR_SCORE", 2000.0)
 
 # --- 通知レベルのスコア閾値 ---
-# score >= HIGH_SCORE_THRESHOLD: 🚨 HIGH PRIORITY(Discord + スマホ通知推奨)
-# score >= WATCH_SCORE_THRESHOLD: ⚠ WATCH(Discord通常通知)
+# score >= HIGH_SCORE_THRESHOLD: 🚨 HIGH(Discord通知)
+# score >= WATCH_SCORE_THRESHOLD: ⚠ WATCH(Discord通知)
 # score >= LOW_SCORE_THRESHOLD: ログ保存のみ(Discordへは送らない)
 # score < LOW_SCORE_THRESHOLD: 何もしない(デバッグログにのみ理由を残す)
 HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 75)
-WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 50)
+WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 70)
 LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 35)
 
 # --- 通知後の結果トラッキング(outcome_tracker.py) ---
