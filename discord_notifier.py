@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import config
@@ -50,6 +51,18 @@ def _send(content: str) -> None:
         logger.warning("discord_notifier: Discordへの通知送信に失敗しました: %s", exc)
 
 
+def _phantom_link(mint: str) -> str:
+    """Phantomアプリでこのトークンを直接開くリンクを組み立てる。
+
+    PHANTOM_REFERRAL_ID(個人に紐づく値、.envでのみ設定)が設定されて
+    いれば付与する。未設定でもリンク自体は生成される。
+    """
+    url = f"https://phantom.com/tokens/solana/{mint}"
+    if config.PHANTOM_REFERRAL_ID:
+        url += f"?{urllib.parse.urlencode({'referralId': config.PHANTOM_REFERRAL_ID})}"
+    return url
+
+
 def notify_score_update(
     token: TrackedToken,
     score: ScoreResult,
@@ -58,9 +71,10 @@ def notify_score_update(
 ) -> None:
     """スコアが通知ライン(WATCH以上)を超えた/更新された瞬間に呼び出す。
 
-    コピペしてPhantom等で検索することだけを想定し、内容はスコアとmint
-    アドレスのみの最小限にしている(2026-07、ユーザー希望により長文の
-    詳細・リンク・注意書きは削除。詳細はDEBUGログ側に残る)。
+    コピペ・タップだけで済むことを想定し、内容はスコア・銘柄名・mint
+    アドレス・Phantomで開くリンクのみの最小限にしている(2026-07、
+    ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
+    ログ側に残る)。
     """
     emoji = _TIER_EMOJI.get(tier, tier)
     lines = [f"{emoji} {tier} Score: {score.total}/100"]
@@ -72,4 +86,5 @@ def notify_score_update(
         lines.append(label)
 
     lines.append(f"`{token.mint}`")
+    lines.append(_phantom_link(token.mint))
     _send("\n".join(lines))

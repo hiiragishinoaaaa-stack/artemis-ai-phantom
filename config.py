@@ -120,6 +120,10 @@ OUTCOMES_FILE_PATH = Path(_outcomes_file_path_env) if _outcomes_file_path_env el
 # --- Discord通知 ---
 DISCORD_ENABLED = _env_bool("DISCORD_ENABLED", False)
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+# 通知に含めるPhantomアプリの起動リンク(https://phantom.com/tokens/solana/
+# {mint})に付ける紹介コード(個人に紐づく値のため、コードに直書きせず
+# .envで設定する。未設定でもリンク自体は生成される)。
+PHANTOM_REFERRAL_ID = os.getenv("PHANTOM_REFERRAL_ID", "")
 
 # --- ログ ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

@@ -47,6 +47,7 @@ def test_notify_does_nothing_when_webhook_url_missing(monkeypatch):
 def test_notify_sends_minimal_message_with_score_and_mint(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "PHANTOM_REFERRAL_ID", "")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
@@ -55,6 +56,29 @@ def test_notify_sends_minimal_message_with_score_and_mint(monkeypatch):
         assert "MintAddr123" in content
         assert "85/100" in content
         assert "WATCH" in content
+
+
+def test_notify_includes_phantom_link_without_referral_id(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "PHANTOM_REFERRAL_ID", "")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        assert "https://phantom.com/tokens/solana/MintAddr123" in content
+        assert "referralId" not in content
+
+
+def test_notify_includes_phantom_link_with_referral_id(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "PHANTOM_REFERRAL_ID", "it5dy15sgab")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        assert "https://phantom.com/tokens/solana/MintAddr123?referralId=it5dy15sgab" in content
 
 
 def test_notify_includes_name_and_symbol_when_present(monkeypatch):
@@ -74,7 +98,7 @@ def test_notify_omits_name_line_when_both_empty(monkeypatch):
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(name="", symbol=""), _score(80), "HIGH", 60)
         content = _sent_content(mock_urlopen)
-        assert content.count("\n") == 1  # スコア行とmint行の2行のみ
+        assert content.count("\n") == 2  # スコア行・mint行・Phantomリンク行の3行のみ
 
 
 def test_notify_high_tier_uses_high_emoji(monkeypatch):
