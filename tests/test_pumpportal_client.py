@@ -26,3 +26,19 @@ async def test_unsubscribe_token_trade_noop_when_disconnected():
 async def test_subscribe_token_trade_noop_when_empty_list():
     client = PumpPortalClient()
     await client.subscribe_token_trade([])
+
+
+@pytest.mark.asyncio
+async def test_subscribe_token_trade_records_mints_even_when_disconnected():
+    """再接続時にmessages()が購読を復元できるよう、未接続でもmintを記録する。"""
+    client = PumpPortalClient()
+    await client.subscribe_token_trade(["mint1", "mint2"])
+    assert client._subscribed_mints == {"mint1", "mint2"}
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_token_trade_removes_recorded_mints():
+    client = PumpPortalClient()
+    await client.subscribe_token_trade(["mint1", "mint2"])
+    await client.unsubscribe_token_trade(["mint1"])
+    assert client._subscribed_mints == {"mint2"}
