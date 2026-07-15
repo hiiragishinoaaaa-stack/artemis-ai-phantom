@@ -9,88 +9,115 @@ from token_watcher import TokenWatcher
 
 @pytest.fixture(autouse=True)
 def _patch_config(monkeypatch):
-    monkeypatch.setattr(config, "EVALUATION_CHECKPOINTS_SECONDS", (20, 40, 60, 90, 120))
+    monkeypatch.setattr(config, "MIGRATION_CHECKPOINTS_SECONDS", (0, 60, 300, 900))
     monkeypatch.setattr(config, "MAX_TRACKED_TOKENS", 500)
 
 
-def _create(watcher: TokenWatcher, mint: str = "MINT1", now: float = 1000.0):
-    return watcher.on_token_created(
-        mint=mint, name="Test Coin", symbol="TEST", creator="creator1", market_cap_sol=10.0, now=now
-    )
+def _start(watcher: TokenWatcher, mint: str = "MINT1", now: float = 1000.0):
+    return watcher.start_tracking(mint=mint, name="Test Coin", symbol="TEST", now=now)
 
 
-def test_on_token_created_starts_tracking():
+def _pair(**overrides) -> dict:
+    base = {
+        "url": "https://dexscreener.com/solana/MINT1",
+        "txns": {"m5": {"buys": overrides.get("buys", 3), "sells": overrides.get("sells", 1)}},
+        "volume": {"m5": overrides.get("volume", 123.0)},
+        "priceChange": {"m5": overrides.get("price_change", 15.0)},
+        "liquidity": {"usd": overrides.get("liquidity", 4000.0)},
+        "marketCap": overrides.get("market_cap", 50000.0),
+    }
+    return base
+
+
+def test_start_tracking_begins_tracking():
     watcher = TokenWatcher()
-    token = _create(watcher)
+    token = _start(watcher)
     assert watcher.get("MINT1") is token
     assert len(watcher) == 1
     assert token.checkpoint_index == 0
     assert token.finished is False
     assert token.notified_tier is None
+    assert token.has_pair_data is False
 
 
-def test_on_token_created_is_idempotent_for_same_mint():
+def test_start_tracking_is_idempotent_for_same_mint():
     watcher = TokenWatcher()
-    first = _create(watcher)
-    second = _create(watcher)
+    first = _start(watcher)
+    second = _start(watcher)
     assert first is second
     assert len(watcher) == 1
 
 
-def test_on_trade_updates_buy_unique_buyers_and_volume():
+def test_apply_snapshot_populates_fields_from_pair():
     watcher = TokenWatcher()
-    _create(watcher)
-    watcher.on_trade("MINT1", "buy", "buyerA", market_cap_sol=12.0, sol_amount=1.0)
-    watcher.on_trade("MINT1", "buy", "buyerA", market_cap_sol=13.0, sol_amount=0.5)  # 同一アドレスの2回目
-    watcher.on_trade("MINT1", "buy", "buyerB", market_cap_sol=14.0, sol_amount=2.0)
+    token = _start(watcher)
+    watcher.apply_snapshot(token, _pair(buys=7, sells=2, volume=555.0, price_change=25.0, liquidity=9000.0, market_cap=80000.0))
 
-    token = watcher.get("MINT1")
-    assert token.buy_count == 3
-    assert len(token.unique_buyers) == 2  # buyerAは1人としてカウント
-    assert token.last_market_cap_sol == 14.0
-    assert token.total_volume_sol == pytest.approx(3.5)
+    assert token.has_pair_data is True
+    assert token.buys_m5 == 7
+    assert token.sells_m5 == 2
+    assert token.volume_m5_usd == 555.0
+    assert token.price_change_m5_pct == 25.0
+    assert token.liquidity_usd == 9000.0
+    assert token.market_cap_usd == 80000.0
+    assert token.dexscreener_url == "https://dexscreener.com/solana/MINT1"
 
 
-def test_on_trade_ignores_unknown_mint():
+def test_apply_snapshot_handles_missing_nested_fields():
     watcher = TokenWatcher()
-    watcher.on_trade("UNKNOWN", "buy", "buyerA", market_cap_sol=1.0)
-    assert len(watcher) == 0
+    token = _start(watcher)
+    watcher.apply_snapshot(token, {})
+
+    assert token.has_pair_data is True
+    assert token.buys_m5 == 0
+    assert token.sells_m5 == 0
+    assert token.volume_m5_usd == 0.0
+    assert token.liquidity_usd == 0.0
 
 
-def test_due_for_checkpoint_respects_first_checkpoint():
+def test_due_for_checkpoint_respects_first_checkpoint_of_zero():
     watcher = TokenWatcher()
-    _create(watcher, now=1000.0)
+    _start(watcher, now=1000.0)
 
-    assert watcher.due_for_checkpoint(now=1010.0) == []  # まだ10秒しか経ってない
-    due = watcher.due_for_checkpoint(now=1021.0)  # 21秒経過(20秒チェックポイント到達)
+    due = watcher.due_for_checkpoint(now=1000.0)  # チェックポイント0秒は即時到達
     assert len(due) == 1
     assert due[0].mint == "MINT1"
 
 
+def test_due_for_checkpoint_respects_later_checkpoints():
+    watcher = TokenWatcher()
+    token = _start(watcher, now=1000.0)
+    watcher.mark_checkpoint_done(token)  # 0秒チェックポイントを消化済みにする
+
+    assert watcher.due_for_checkpoint(now=1030.0) == []  # まだ60秒経ってない
+    due = watcher.due_for_checkpoint(now=1061.0)
+    assert len(due) == 1
+
+
 def test_due_for_checkpoint_excludes_finished_tokens():
     watcher = TokenWatcher()
-    token = _create(watcher, now=1000.0)
-    for _ in range(len(config.EVALUATION_CHECKPOINTS_SECONDS)):
+    token = _start(watcher, now=1000.0)
+    for _ in range(len(config.MIGRATION_CHECKPOINTS_SECONDS)):
         watcher.mark_checkpoint_done(token)
 
     assert token.finished is True
-    assert watcher.due_for_checkpoint(now=2000.0) == []
+    assert watcher.due_for_checkpoint(now=100000.0) == []
 
 
 def test_current_checkpoint_seconds_advances():
     watcher = TokenWatcher()
-    token = _create(watcher, now=1000.0)
-    assert watcher.current_checkpoint_seconds(token) == 20
+    token = _start(watcher, now=1000.0)
+    assert watcher.current_checkpoint_seconds(token) == 0
 
     watcher.mark_checkpoint_done(token)
     assert token.checkpoint_index == 1
-    assert watcher.current_checkpoint_seconds(token) == 40
+    assert watcher.current_checkpoint_seconds(token) == 60
 
 
 def test_mark_checkpoint_done_marks_finished_after_last_checkpoint():
     watcher = TokenWatcher()
-    token = _create(watcher, now=1000.0)
-    for expected_seconds in config.EVALUATION_CHECKPOINTS_SECONDS:
+    token = _start(watcher, now=1000.0)
+    for expected_seconds in config.MIGRATION_CHECKPOINTS_SECONDS:
         assert watcher.current_checkpoint_seconds(token) == expected_seconds
         assert token.finished is False
         watcher.mark_checkpoint_done(token)
@@ -100,7 +127,7 @@ def test_mark_checkpoint_done_marks_finished_after_last_checkpoint():
 
 def test_forget_removes_token():
     watcher = TokenWatcher()
-    _create(watcher)
+    _start(watcher)
     watcher.forget("MINT1")
     assert watcher.get("MINT1") is None
     assert len(watcher) == 0
@@ -109,11 +136,11 @@ def test_forget_removes_token():
 def test_evicts_oldest_when_over_capacity(monkeypatch):
     monkeypatch.setattr(config, "MAX_TRACKED_TOKENS", 2)
     watcher = TokenWatcher()
-    _create(watcher, mint="OLD", now=1000.0)
-    _create(watcher, mint="MID", now=1001.0)
+    _start(watcher, mint="OLD", now=1000.0)
+    _start(watcher, mint="MID", now=1001.0)
     assert len(watcher) == 2
 
-    _create(watcher, mint="NEW", now=1002.0)  # 上限超過、最古(OLD)が間引かれる
+    _start(watcher, mint="NEW", now=1002.0)  # 上限超過、最古(OLD)が間引かれる
     assert len(watcher) == 2
     assert watcher.get("OLD") is None
     assert watcher.get("MID") is not None

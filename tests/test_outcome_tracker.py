@@ -15,14 +15,14 @@ def _patch_config(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "OUTCOMES_FILE_PATH", tmp_path / "outcomes.jsonl")
 
 
-def _register(tracker: OutcomeTracker, mint: str = "MINT1", now: float = 1000.0, market_cap_sol: float = 10.0):
+def _register(tracker: OutcomeTracker, mint: str = "MINT1", now: float = 1000.0, market_cap_usd: float = 10000.0):
     tracker.register(
         mint=mint,
         name="Test Coin",
         symbol="TEST",
         tier="WATCH",
         score=85,
-        market_cap_sol=market_cap_sol,
+        market_cap_usd=market_cap_usd,
         now=now,
     )
 
@@ -36,16 +36,16 @@ def test_register_starts_tracking():
 
 def test_register_does_not_overwrite_existing():
     tracker = OutcomeTracker()
-    _register(tracker, market_cap_sol=10.0)
-    _register(tracker, market_cap_sol=999.0)  # 既に追跡中なので無視される
+    _register(tracker, market_cap_usd=10000.0)
+    _register(tracker, market_cap_usd=999999.0)  # 既に追跡中なので無視される
 
     outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
-    assert outcome.market_cap_at_notify == 10.0
+    assert outcome.market_cap_at_notify_usd == 10000.0
 
 
 def test_update_market_cap_ignores_untracked_mint():
     tracker = OutcomeTracker()
-    tracker.update_market_cap("UNKNOWN", 50.0)  # 例外を送出しないことを確認
+    tracker.update_market_cap("UNKNOWN", 50000.0)  # 例外を送出しないことを確認
 
 
 def test_due_for_checkpoint_respects_first_checkpoint():
@@ -60,8 +60,8 @@ def test_due_for_checkpoint_respects_first_checkpoint():
 
 def test_record_and_advance_writes_jsonl_and_advances_checkpoint():
     tracker = OutcomeTracker()
-    _register(tracker, now=1000.0, market_cap_sol=10.0)
-    tracker.update_market_cap("MINT1", 15.0)  # +50%
+    _register(tracker, now=1000.0, market_cap_usd=10000.0)
+    tracker.update_market_cap("MINT1", 15000.0)  # +50%
 
     outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
     tracker.record_and_advance(outcome)

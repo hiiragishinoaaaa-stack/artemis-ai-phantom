@@ -11,19 +11,14 @@ from token_watcher import TokenWatcher
 
 def _token(**overrides):
     watcher = TokenWatcher()
-    token = watcher.on_token_created(
-        mint="MintAddr123",
-        name="Test Coin",
-        symbol="TEST",
-        creator="creator1",
-        market_cap_sol=10.0,
-        now=1000.0,
-    )
-    token.buy_count = overrides.get("buy_count", 5)
-    token.sell_count = overrides.get("sell_count", 1)
-    token.unique_buyers = overrides.get("unique_buyers", {"a", "b", "c"})
-    token.total_volume_sol = overrides.get("total_volume_sol", 12.5)
-    token.last_market_cap_sol = overrides.get("last_market_cap_sol", 25.0)
+    token = watcher.start_tracking(mint="MintAddr123", name="Test Coin", symbol="TEST", now=1000.0)
+    token.buys_m5 = overrides.get("buys_m5", 7)
+    token.sells_m5 = overrides.get("sells_m5", 1)
+    token.volume_m5_usd = overrides.get("volume_m5_usd", 1234.0)
+    token.price_change_m5_pct = overrides.get("price_change_m5_pct", 42.0)
+    token.liquidity_usd = overrides.get("liquidity_usd", 5000.0)
+    token.market_cap_usd = overrides.get("market_cap_usd", 80000.0)
+    token.dexscreener_url = overrides.get("dexscreener_url", "")
     return token
 
 
@@ -66,6 +61,17 @@ def test_notify_sends_request_with_token_and_score_details(monkeypatch):
         assert "85/100" in body
         assert "60" in body
         assert "WATCH" in body
+
+
+def test_notify_uses_dexscreener_url_when_available(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        token = _token(dexscreener_url="https://dexscreener.com/solana/somepair")
+        discord_notifier.notify_score_update(token, _score(), "WATCH", 60)
+        body = mock_urlopen.call_args[0][0].data.decode("utf-8")
+        assert "https://dexscreener.com/solana/somepair" in body
 
 
 def test_notify_high_tier_uses_high_priority_header(monkeypatch):

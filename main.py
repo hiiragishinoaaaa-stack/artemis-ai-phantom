@@ -1,10 +1,13 @@
 """ARTEMIS Phantom Sniper のエントリーポイント。
 
-PumpPortalのWebSocketでpump.fun上の新規トークン作成をリアルタイムに検知し、
-config.EVALUATION_CHECKPOINTS_SECONDS(既定20/40/60/90/120秒)の各時点で
-scoring.py(100点満点スコア)により繰り返し再評価する。スコアが通知ライン
-(WATCH以上)を初めて超えた瞬間、またはより高いティアへ上昇した瞬間だけ
-Discordへ通知する(120秒までは通知後も監視を継続する)。
+PumpPortalのWebSocketで、pump.fun上のトークンがボンディングカーブから
+実際のDEX(Raydium等)へ卒業(migration)した瞬間をリアルタイムに検知する
+(subscribeNewToken/subscribeMigrationはどちらも無料。詳細はpumpportal_
+client.pyのdocstring参照)。卒業を検知したら、config.MIGRATION_
+CHECKPOINTS_SECONDS(既定0/60/300/900秒)の各時点でDexScreenerの公開API
+(無料)から実際のDEX取引状況を取得して繰り返しスコアを再計算し、スコアが
+通知ライン(WATCH以上)を初めて超えた瞬間、またはより高いティアへ上昇した
+瞬間だけDiscordへ通知する。
 
 通知したトークンはoutcome_tracker.pyにより30分/1時間/24時間後の時価総額
 変化も記録する(将来、どのスコア項目が実際に有効だったか分析するため)。
@@ -22,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import config
+import dexscreener_client
 import discord_notifier
 import scoring
 from logger import setup_logger
@@ -75,7 +79,7 @@ class DailyStats:
 
     def summary_line(self) -> str:
         return (
-            f"stats: date={self.date} 監視={self.watched} HIGH={self.high} "
+            f"stats: date={self.date} 卒業検知={self.watched} HIGH={self.high} "
             f"WATCH={self.watch} LOW={self.low} 圏外={self.none_count} "
             f"平均Score={self.average_score():.1f}"
         )
@@ -85,67 +89,61 @@ def _utc_date_str(now: float) -> str:
     return datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-def _safe_float(value: object) -> float:
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0.0
+async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher) -> None:
+    """PumpPortalからのメッセージを受け取り、卒業(migration)イベントを検知する。
 
-
-async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, outcomes: OutcomeTracker) -> None:
-    """PumpPortalからのメッセージを受け取り、TokenWatcher/OutcomeTrackerの状態を更新し続ける。"""
+    subscribeTokenTradeは使っていないため、このWebSocket上で流れてくる
+    メッセージはsubscribeNewToken由来("create")かsubscribeMigration由来の
+    どちらか。PumpPortal側の正確なフィールド名は未確認のため、"create"
+    以外は全てmigrationとみなし、生のpayloadをDEBUGログへ残す(想定と
+    フィールド名が違った場合、ここを見て調整する)。
+    """
     async for message in client.messages():
-        tx_type = message.get("txType")
         mint = message.get("mint")
-        if not mint or not tx_type:
+        if not mint:
             continue
 
+        tx_type = message.get("txType")
         if tx_type == "create":
-            token = watcher.on_token_created(
-                mint=str(mint),
-                name=str(message.get("name", "")),
-                symbol=str(message.get("symbol", "")),
-                creator=str(message.get("traderPublicKey", "")),
-                market_cap_sol=_safe_float(message.get("marketCapSol")),
-                now=time.time(),
+            logger.debug(
+                "main: 新規トークン作成を検知(まだDEX卒業前) mint=%s name=%s symbol=%s",
+                mint,
+                message.get("name", ""),
+                message.get("symbol", ""),
             )
-            logger.info(
-                "main: 新規トークンを検知しました mint=%s name=%s symbol=%s",
-                token.mint,
-                token.name,
-                token.symbol,
-            )
-            await client.subscribe_token_trade([token.mint])
-        elif tx_type in ("buy", "sell"):
-            mint_str = str(mint)
-            market_cap_sol = _safe_float(message.get("marketCapSol"))
-            watcher.on_trade(
-                mint=mint_str,
-                tx_type=tx_type,
-                trader=str(message.get("traderPublicKey", "")),
-                market_cap_sol=market_cap_sol,
-                sol_amount=_safe_float(message.get("solAmount")),
-            )
-            outcomes.update_market_cap(mint_str, market_cap_sol)
+            continue
+
+        logger.debug("main: migration想定イベントを受信 raw=%s", message)
+        token = watcher.start_tracking(
+            mint=str(mint),
+            name=str(message.get("name", "")),
+            symbol=str(message.get("symbol", "")),
+            now=time.time(),
+        )
+        logger.info(
+            "main: DEX卒業を検知しました mint=%s name=%s symbol=%s",
+            token.mint,
+            token.name,
+            token.symbol,
+        )
 
 
 def _log_score(token: TrackedToken, score: scoring.ScoreResult, elapsed: int, tier: str | None) -> None:
     reasons = "; ".join(c.detail for c in score.components if c.points == 0)
     logger.debug(
-        "main: checkpoint mint=%s symbol=%s elapsed=%d秒 score=%d tier=%s 未加点理由=[%s]",
+        "main: checkpoint mint=%s symbol=%s elapsed=%d秒 has_pair_data=%s score=%d tier=%s 未加点理由=[%s]",
         token.mint,
         token.symbol,
         elapsed,
+        token.has_pair_data,
         score.total,
         tier or "圏外",
         reasons or "なし",
     )
 
 
-async def _evaluation_loop(
-    client: PumpPortalClient, watcher: TokenWatcher, outcomes: OutcomeTracker, stats: DailyStats
-) -> None:
-    """定期的にチェックポイントを迎えたトークンを再評価し、通知・統計を更新する。"""
+async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stats: DailyStats) -> None:
+    """定期的にチェックポイントを迎えたトークンをDexScreenerで再取得・再評価する。"""
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         now = time.time()
@@ -153,6 +151,11 @@ async def _evaluation_loop(
 
         for token in watcher.due_for_checkpoint(now):
             elapsed = watcher.current_checkpoint_seconds(token)
+
+            pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, token.mint)
+            if pair is not None:
+                watcher.apply_snapshot(token, pair)
+
             score = scoring.compute_score(token)
             tier = scoring.tier_for_score(score.total)
             _log_score(token, score, elapsed, tier)
@@ -168,14 +171,14 @@ async def _evaluation_loop(
                         tier,
                         elapsed,
                     )
-                    discord_notifier.notify_score_update(token, score, tier, elapsed)
+                    await asyncio.to_thread(discord_notifier.notify_score_update, token, score, tier, elapsed)
                     outcomes.register(
                         mint=token.mint,
                         name=token.name,
                         symbol=token.symbol,
                         tier=tier,
                         score=score.total,
-                        market_cap_sol=token.last_market_cap_sol,
+                        market_cap_usd=token.market_cap_usd,
                         now=now,
                     )
 
@@ -183,20 +186,22 @@ async def _evaluation_loop(
 
             if token.finished:
                 stats.record_final(token.notified_tier, score.total)
-                if not outcomes.is_tracking(token.mint):
-                    await client.unsubscribe_token_trade([token.mint])
                 watcher.forget(token.mint)
 
 
-async def _outcome_loop(client: PumpPortalClient, outcomes: OutcomeTracker) -> None:
-    """通知済みトークンの結果(30分/1時間/24時間後の時価総額変化)を記録し続ける。"""
+async def _outcome_loop(outcomes: OutcomeTracker) -> None:
+    """通知済みトークンの結果(30分/1時間/24時間後の時価総額変化)をDexScreenerから取得・記録する。"""
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         now = time.time()
         for outcome in outcomes.due_for_checkpoint(now):
+            pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, outcome.mint)
+            if pair is not None:
+                market_cap = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
+                outcomes.update_market_cap(outcome.mint, market_cap)
+
             outcomes.record_and_advance(outcome)
             if outcome.finished:
-                await client.unsubscribe_token_trade([outcome.mint])
                 outcomes.forget(outcome.mint)
 
 
@@ -214,8 +219,8 @@ async def async_main() -> None:
     outcomes = OutcomeTracker()
     stats = DailyStats()
     logger.info(
-        "main: 監視を開始します checkpoints=%s秒 high>=%s watch>=%s low>=%s discord_enabled=%s",
-        config.EVALUATION_CHECKPOINTS_SECONDS,
+        "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s discord_enabled=%s",
+        config.MIGRATION_CHECKPOINTS_SECONDS,
         config.HIGH_SCORE_THRESHOLD,
         config.WATCH_SCORE_THRESHOLD,
         config.LOW_SCORE_THRESHOLD,
@@ -228,9 +233,9 @@ async def async_main() -> None:
         )
 
     await asyncio.gather(
-        _consume_loop(client, watcher, outcomes),
-        _evaluation_loop(client, watcher, outcomes, stats),
-        _outcome_loop(client, outcomes),
+        _consume_loop(client, watcher),
+        _checkpoint_loop(watcher, outcomes, stats),
+        _outcome_loop(outcomes),
         _stats_loop(stats),
     )
 

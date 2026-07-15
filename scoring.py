@@ -1,10 +1,14 @@
 """スコアリングロジック(0-100点)。
 
-token_watcher.TrackedTokenの状態から、複数の独立した「スコア項目」を
-計算して合算する。将来RugCheck/DexScreener/Birdeye/Solscan/AIスコアリング
-等の項目を追加しやすいよう、各項目は「TrackedTokenを受け取り
-ScoreComponent(点数+説明文)を返す関数」として独立させている
-(_SCORERS参照。追加する場合はここに関数を1つ足すだけでよい)。
+token_watcher.TrackedTokenの状態(DexScreenerから取得した直近5分の
+売買件数・出来高・価格変動・流動性)から、複数の独立した「スコア項目」を
+計算して合算する。将来RugCheck/Birdeye/Solscan/AIスコアリング等の項目を
+追加しやすいよう、各項目は「TrackedTokenを受け取りScoreComponent(点数+
+説明文)を返す関数」として独立させている(_SCORERS参照。追加する場合は
+ここに関数を1つ足すだけでよい)。
+
+DexScreenerにまだペアが見つかっていない(has_pair_data=False)トークンは
+全項目0点になる(全フィールドが既定値0のため、特別扱いは不要)。
 """
 from __future__ import annotations
 
@@ -28,65 +32,65 @@ class ScoreResult:
     components: list[ScoreComponent] = field(default_factory=list)
 
 
-def _score_buy_count(token: TrackedToken) -> ScoreComponent:
-    count = token.buy_count
+def _score_buys_m5(token: TrackedToken) -> ScoreComponent:
+    count = token.buys_m5
+    if count >= 20:
+        return ScoreComponent("直近5分の買い件数", 30, f"買い{count}件(20件以上: +30)")
     if count >= 10:
-        return ScoreComponent("買い件数", 30, f"買い{count}件(10件以上: +30)")
+        return ScoreComponent("直近5分の買い件数", 20, f"買い{count}件(10件以上: +20)")
     if count >= 5:
-        return ScoreComponent("買い件数", 20, f"買い{count}件(5件以上: +20)")
-    if count >= 3:
-        return ScoreComponent("買い件数", 10, f"買い{count}件(3件以上: +10)")
-    return ScoreComponent("買い件数", 0, f"買い{count}件(3件未満: 加点なし)")
-
-
-def _score_unique_buyers(token: TrackedToken) -> ScoreComponent:
-    count = len(token.unique_buyers)
-    if count >= 10:
-        return ScoreComponent("ユニーク買い手", 30, f"ユニーク買い手{count}人(10人以上: +30)")
-    if count >= 5:
-        return ScoreComponent("ユニーク買い手", 20, f"ユニーク買い手{count}人(5人以上: +20)")
-    if count >= 2:
-        return ScoreComponent("ユニーク買い手", 10, f"ユニーク買い手{count}人(2人以上: +10)")
-    return ScoreComponent("ユニーク買い手", 0, f"ユニーク買い手{count}人(2人未満: 加点なし)")
+        return ScoreComponent("直近5分の買い件数", 10, f"買い{count}件(5件以上: +10)")
+    return ScoreComponent("直近5分の買い件数", 0, f"買い{count}件(5件未満: 加点なし)")
 
 
 def _score_buy_sell_ratio(token: TrackedToken) -> ScoreComponent:
-    buy, sell = token.buy_count, token.sell_count
+    buy, sell = token.buys_m5, token.sells_m5
     if buy > 0 and sell == 0:
-        return ScoreComponent("Buy/Sell比率", 30, f"買い{buy}件/売り0件(売りなし: +30)")
+        return ScoreComponent("直近5分のBuy/Sell比率", 30, f"買い{buy}件/売り0件(売りなし: +30)")
     if sell > 0 and buy >= sell * 3:
-        return ScoreComponent("Buy/Sell比率", 30, f"買い{buy}/売り{sell}(3倍以上: +30)")
+        return ScoreComponent("直近5分のBuy/Sell比率", 30, f"買い{buy}/売り{sell}(3倍以上: +30)")
     if sell > 0 and buy >= sell * 2:
-        return ScoreComponent("Buy/Sell比率", 20, f"買い{buy}/売り{sell}(2倍以上: +20)")
+        return ScoreComponent("直近5分のBuy/Sell比率", 20, f"買い{buy}/売り{sell}(2倍以上: +20)")
     if buy > sell:
-        return ScoreComponent("Buy/Sell比率", 10, f"買い{buy}/売り{sell}(買い優勢: +10)")
-    return ScoreComponent("Buy/Sell比率", 0, f"買い{buy}/売り{sell}(売り優勢または同数: 加点なし)")
+        return ScoreComponent("直近5分のBuy/Sell比率", 10, f"買い{buy}/売り{sell}(買い優勢: +10)")
+    return ScoreComponent("直近5分のBuy/Sell比率", 0, f"買い{buy}/売り{sell}(売り優勢または同数: 加点なし)")
 
 
-def _score_volume(token: TrackedToken) -> ScoreComponent:
-    volume = token.total_volume_sol
-    threshold = config.MIN_VOLUME_SOL_FOR_SCORE
+def _score_volume_m5(token: TrackedToken) -> ScoreComponent:
+    volume = token.volume_m5_usd
+    threshold = config.MIN_VOLUME_USD_FOR_SCORE
     if volume >= threshold:
-        return ScoreComponent("Volume", 10, f"出来高{volume:.2f} SOL({threshold}以上: +10)")
-    return ScoreComponent("Volume", 0, f"出来高{volume:.2f} SOL({threshold}未満: 加点なし)")
+        return ScoreComponent("直近5分の出来高", 10, f"出来高${volume:,.0f}({threshold:,.0f}以上: +10)")
+    return ScoreComponent("直近5分の出来高", 0, f"出来高${volume:,.0f}({threshold:,.0f}未満: 加点なし)")
 
 
-def _score_market_cap(token: TrackedToken) -> ScoreComponent:
-    mcap = token.last_market_cap_sol
-    threshold = config.MIN_MARKET_CAP_SOL_FOR_SCORE
-    if mcap >= threshold:
-        return ScoreComponent("Market Cap", 10, f"時価総額{mcap:.1f} SOL({threshold}以上: +10)")
-    return ScoreComponent("Market Cap", 0, f"時価総額{mcap:.1f} SOL({threshold}未満: 加点なし)")
+def _score_liquidity(token: TrackedToken) -> ScoreComponent:
+    liquidity = token.liquidity_usd
+    threshold = config.MIN_LIQUIDITY_USD_FOR_SCORE
+    if liquidity >= threshold:
+        return ScoreComponent("流動性", 10, f"流動性${liquidity:,.0f}({threshold:,.0f}以上: +10)")
+    return ScoreComponent("流動性", 0, f"流動性${liquidity:,.0f}({threshold:,.0f}未満: 加点なし)")
+
+
+def _score_price_change_m5(token: TrackedToken) -> ScoreComponent:
+    change = token.price_change_m5_pct
+    if change >= 50:
+        return ScoreComponent("直近5分の価格変動", 20, f"価格変動{change:+.1f}%(50%以上: +20)")
+    if change >= 20:
+        return ScoreComponent("直近5分の価格変動", 10, f"価格変動{change:+.1f}%(20%以上: +10)")
+    if change > 0:
+        return ScoreComponent("直近5分の価格変動", 5, f"価格変動{change:+.1f}%(プラス: +5)")
+    return ScoreComponent("直近5分の価格変動", 0, f"価格変動{change:+.1f}%(プラスなし: 加点なし)")
 
 
 # 将来項目を追加する場合はここに関数を1つ足すだけでよい(TrackedTokenを
 # 受け取りScoreComponentを返す関数であること。他の項目とは完全に独立)。
 _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
-    _score_buy_count,
-    _score_unique_buyers,
+    _score_buys_m5,
     _score_buy_sell_ratio,
-    _score_volume,
-    _score_market_cap,
+    _score_volume_m5,
+    _score_liquidity,
+    _score_price_change_m5,
 ]
 
 
