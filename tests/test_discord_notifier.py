@@ -16,9 +16,9 @@ def _sent_content(mock_urlopen) -> str:
     return json.loads(request.data.decode("utf-8"))["content"]
 
 
-def _token(**overrides):
+def _token(name: str = "Test Coin", symbol: str = "TEST", **overrides):
     watcher = TokenWatcher()
-    token = watcher.start_tracking(mint="MintAddr123", name="Test Coin", symbol="TEST", now=1000.0)
+    token = watcher.start_tracking(mint="MintAddr123", name=name, symbol=symbol, now=1000.0)
     return token
 
 
@@ -55,6 +55,26 @@ def test_notify_sends_minimal_message_with_score_and_mint(monkeypatch):
         assert "MintAddr123" in content
         assert "85/100" in content
         assert "WATCH" in content
+
+
+def test_notify_includes_name_and_symbol_when_present(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(name="Some Coin", symbol="SOME"), _score(80), "HIGH", 60)
+        content = _sent_content(mock_urlopen)
+        assert "Some Coin ($SOME)" in content
+
+
+def test_notify_omits_name_line_when_both_empty(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(name="", symbol=""), _score(80), "HIGH", 60)
+        content = _sent_content(mock_urlopen)
+        assert content.count("\n") == 1  # スコア行とmint行の2行のみ
 
 
 def test_notify_high_tier_uses_high_emoji(monkeypatch):

@@ -63,5 +63,13 @@ def notify_score_update(
     詳細・リンク・注意書きは削除。詳細はDEBUGログ側に残る)。
     """
     emoji = _TIER_EMOJI.get(tier, tier)
+    lines = [f"{emoji} {tier} Score: {score.total}/100"]
 
-    _send(f"{emoji} {tier} Score: {score.total}/100\n`{token.mint}`")
+    name = token.name.strip()
+    symbol = token.symbol.strip()
+    if name or symbol:
+        label = f"{name} (${symbol})" if name and symbol else (name or f"${symbol}")
+        lines.append(label)
+
+    lines.append(f"`{token.mint}`")
+    _send("\n".join(lines))
