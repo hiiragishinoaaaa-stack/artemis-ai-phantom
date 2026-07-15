@@ -25,13 +25,16 @@ def _token(**overrides):
     token.volume_m5_usd = overrides.get("volume_m5_usd", 0.0)
     token.liquidity_usd = overrides.get("liquidity_usd", 0.0)
     token.price_change_m5_pct = overrides.get("price_change_m5_pct", 0.0)
+    token.rugcheck_checked = overrides.get("rugcheck_checked", False)
+    token.rugcheck_danger = overrides.get("rugcheck_danger", False)
+    token.rugcheck_danger_reason = overrides.get("rugcheck_danger_reason", "")
     return token
 
 
 def test_compute_score_all_zero_when_nothing_happened():
     result = scoring.compute_score(_token())
     assert result.total == 0
-    assert len(result.components) == 5
+    assert len(result.components) == 6
 
 
 @pytest.mark.parametrize(
@@ -88,9 +91,43 @@ def test_compute_score_sums_all_components_and_caps_at_100():
         volume_m5_usd=10000.0,
         liquidity_usd=10000.0,
         price_change_m5_pct=100.0,
+        rugcheck_checked=True,
+        rugcheck_danger=False,
     )
     result = scoring.compute_score(token)
-    assert result.total == 100  # 30+30+10+10+20 = 100 (クランプ不要でちょうど満点)
+    assert result.total == 100  # 30+30+10+10+20+10 = 110 -> クランプされ100
+
+
+def test_score_rugcheck_safety_unchecked_gives_no_points():
+    assert scoring._score_rugcheck_safety(_token(rugcheck_checked=False)).points == 0
+
+
+def test_score_rugcheck_safety_checked_and_safe_gives_bonus():
+    component = scoring._score_rugcheck_safety(_token(rugcheck_checked=True, rugcheck_danger=False))
+    assert component.points == 10
+
+
+def test_score_rugcheck_safety_danger_gives_large_negative_penalty():
+    component = scoring._score_rugcheck_safety(
+        _token(rugcheck_checked=True, rugcheck_danger=True, rugcheck_danger_reason="Single holder ownership")
+    )
+    assert component.points < 0
+    assert "Single holder ownership" in component.detail
+
+
+def test_compute_score_forces_zero_when_rugcheck_danger_detected_even_with_max_other_components():
+    token = _token(
+        buys_m5=20,
+        sells_m5=0,
+        volume_m5_usd=10000.0,
+        liquidity_usd=10000.0,
+        price_change_m5_pct=100.0,
+        rugcheck_checked=True,
+        rugcheck_danger=True,
+        rugcheck_danger_reason="Mint authority still active",
+    )
+    result = scoring.compute_score(token)
+    assert result.total == 0
 
 
 @pytest.mark.parametrize(

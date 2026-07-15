@@ -38,6 +38,13 @@ class TrackedToken:
     price_change_m5_pct: float = 0.0
     liquidity_usd: float = 0.0
     market_cap_usd: float = 0.0
+    # RugCheckレポートを取得済みかどうか(1トークンにつき1回だけ取得する
+    # ため、main.pyがこのフラグで二重取得を防ぐ)。
+    rugcheck_checked: bool = False
+    # RugCheckが"danger"レベルのリスクフラグを検出した場合True。
+    # scoring.pyはこの場合スコアを強制的に0点にする。
+    rugcheck_danger: bool = False
+    rugcheck_danger_reason: str = ""
     # config.MIGRATION_CHECKPOINTS_SECONDSのうち、次に処理すべきチェック
     # ポイントのインデックス。最後まで処理し終えるとfinished=Trueになる。
     checkpoint_index: int = 0
@@ -87,6 +94,16 @@ class TokenWatcher:
         if url:
             token.dexscreener_url = str(url)
         token.has_pair_data = True
+
+    def apply_rugcheck_report(self, token: TrackedToken, danger_reason: str | None) -> None:
+        """rugcheck_client.extract_danger_reason()の結果をtokenへ反映する。
+
+        danger_reasonがNoneでない場合、"danger"レベルのリスクが検出された
+        ことを示す(scoring.pyがこの場合スコアを強制的に0点にする)。
+        """
+        token.rugcheck_checked = True
+        token.rugcheck_danger = danger_reason is not None
+        token.rugcheck_danger_reason = danger_reason or ""
 
     def due_for_checkpoint(self, now: float) -> list[TrackedToken]:
         """次のチェックポイント時刻を過ぎ、まだそのチェックポイントを処理していない

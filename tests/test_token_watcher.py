@@ -38,6 +38,8 @@ def test_start_tracking_begins_tracking():
     assert token.finished is False
     assert token.notified_tier is None
     assert token.has_pair_data is False
+    assert token.rugcheck_checked is False
+    assert token.rugcheck_danger is False
 
 
 def test_start_tracking_is_idempotent_for_same_mint():
@@ -73,6 +75,26 @@ def test_apply_snapshot_handles_missing_nested_fields():
     assert token.sells_m5 == 0
     assert token.volume_m5_usd == 0.0
     assert token.liquidity_usd == 0.0
+
+
+def test_apply_rugcheck_report_marks_safe_when_no_danger_reason():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_rugcheck_report(token, None)
+
+    assert token.rugcheck_checked is True
+    assert token.rugcheck_danger is False
+    assert token.rugcheck_danger_reason == ""
+
+
+def test_apply_rugcheck_report_marks_danger_when_reason_given():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_rugcheck_report(token, "Single holder ownership")
+
+    assert token.rugcheck_checked is True
+    assert token.rugcheck_danger is True
+    assert token.rugcheck_danger_reason == "Single holder ownership"
 
 
 def test_due_for_checkpoint_respects_first_checkpoint_of_zero():

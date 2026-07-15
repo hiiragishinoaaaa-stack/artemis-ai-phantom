@@ -72,6 +72,13 @@ RECONNECT_DELAY_SECONDS = _env_int("RECONNECT_DELAY_SECONDS", 5)
 # チェックポイント間隔・同時観察数と合わせて叩きすぎないよう注意。
 DEXSCREENER_API_BASE_URL = os.getenv("DEXSCREENER_API_BASE_URL", "https://api.dexscreener.com")
 
+# --- RugCheck REST API接続(rugcheck_client.py) ---
+# 無料・APIキー不要(https://api.rugcheck.xyz/swagger/index.html)。
+# 未認証だと10req/minとDexScreenerよりレート制限が厳しいため、トークン
+# 1件につき最初のチェックポイント(0秒)で1回だけ取得し、結果を
+# TrackedToken.rugcheck_checkedへキャッシュして使い回す(main.py参照)。
+RUGCHECK_API_BASE_URL = os.getenv("RUGCHECK_API_BASE_URL", "https://api.rugcheck.xyz")
+
 # --- 卒業後の観察・スコアリング(token_watcher.py / scoring.py) ---
 # 「条件を全部満たさなければ即破棄」ではなく、100点満点のスコア方式で
 # 評価する。DEX卒業(migration)を検知してから、以下の秒数(migrated_atから

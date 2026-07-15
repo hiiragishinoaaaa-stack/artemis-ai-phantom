@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 import config
 import dexscreener_client
 import discord_notifier
+import rugcheck_client
 import scoring
 from logger import setup_logger
 from outcome_tracker import OutcomeTracker
@@ -161,7 +162,7 @@ async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, recent_
 
 
 def _log_score(token: TrackedToken, score: scoring.ScoreResult, elapsed: int, tier: str | None) -> None:
-    reasons = "; ".join(c.detail for c in score.components if c.points == 0)
+    reasons = "; ".join(c.detail for c in score.components if c.points <= 0)
     logger.debug(
         "main: checkpoint mint=%s symbol=%s elapsed=%d秒 has_pair_data=%s score=%d tier=%s 未加点理由=[%s]",
         token.mint,
@@ -187,6 +188,22 @@ async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stat
             pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, token.mint)
             if pair is not None:
                 watcher.apply_snapshot(token, pair)
+
+            if not token.rugcheck_checked:
+                # トークン1件につき1回だけ取得する(レート制限がDexScreener
+                # より厳しいため)。取得に失敗した場合はrugcheck_checkedを
+                # Trueにしないため、次のチェックポイントで再試行される。
+                report = await asyncio.to_thread(rugcheck_client.fetch_risk_report, token.mint)
+                if report is not None:
+                    danger_reason = rugcheck_client.extract_danger_reason(report)
+                    watcher.apply_rugcheck_report(token, danger_reason)
+                    if danger_reason:
+                        logger.info(
+                            "main: RugCheckで危険フラグを検出しました mint=%s symbol=%s reason=%s",
+                            token.mint,
+                            token.symbol,
+                            danger_reason,
+                        )
 
             score = scoring.compute_score(token)
             tier = scoring.tier_for_score(score.total)

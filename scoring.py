@@ -83,6 +83,25 @@ def _score_price_change_m5(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("直近5分の価格変動", 0, f"価格変動{change:+.1f}%(プラスなし: 加点なし)")
 
 
+# RugCheckが"danger"レベルのリスク(mint権限が発行者に残っている、上位
+# 保有者への極端な集中、単一保有者が大半保有、等)を検出した場合、他の
+# 項目がどれだけ高くても通知させないための強いペナルティ。他の項目の
+# 合計が現実的に届く範囲(最大100点)を確実に相殺できる値にしている。
+_RUGCHECK_DANGER_PENALTY = -100
+
+
+def _score_rugcheck_safety(token: TrackedToken) -> ScoreComponent:
+    if not token.rugcheck_checked:
+        return ScoreComponent("RugCheckセーフティ", 0, "RugCheck未取得(判定なし)")
+    if token.rugcheck_danger:
+        return ScoreComponent(
+            "RugCheckセーフティ",
+            _RUGCHECK_DANGER_PENALTY,
+            f"危険フラグ検出: {token.rugcheck_danger_reason}(スコアを強制的に0点扱いにします)",
+        )
+    return ScoreComponent("RugCheckセーフティ", 10, "危険フラグなし(+10)")
+
+
 # 将来項目を追加する場合はここに関数を1つ足すだけでよい(TrackedTokenを
 # 受け取りScoreComponentを返す関数であること。他の項目とは完全に独立)。
 _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
@@ -91,6 +110,7 @@ _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
     _score_volume_m5,
     _score_liquidity,
     _score_price_change_m5,
+    _score_rugcheck_safety,
 ]
 
 
