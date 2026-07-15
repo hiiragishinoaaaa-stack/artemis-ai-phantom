@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -37,6 +38,31 @@ logger = logging.getLogger("phantom_sniper")
 
 _POLL_INTERVAL_SECONDS = 5
 _STATS_LOG_INTERVAL_SECONDS = 1800
+_MAX_CACHED_NAMES = 5000
+
+
+class _RecentTokenNames:
+    """"create"イベントで見たmint→(name, symbol)を一定件数だけ覚えておくFIFOキャッシュ。
+
+    subscribeMigrationのイベントには銘柄名/シンボルが含まれないため、
+    直前に見たcreateイベントの内容で補う(_consume_loop参照)。無制限に
+    貯め続けるとメモリを圧迫するため、古いものから間引く。
+    """
+
+    def __init__(self, max_size: int = _MAX_CACHED_NAMES) -> None:
+        self._max_size = max_size
+        self._cache: OrderedDict[str, tuple[str, str]] = OrderedDict()
+
+    def remember(self, mint: str, name: str, symbol: str) -> None:
+        if not name and not symbol:
+            return
+        self._cache[mint] = (name, symbol)
+        self._cache.move_to_end(mint)
+        if len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+
+    def get(self, mint: str) -> tuple[str, str]:
+        return self._cache.get(mint, ("", ""))
 
 
 @dataclass
@@ -89,7 +115,7 @@ def _utc_date_str(now: float) -> str:
     return datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher) -> None:
+async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, recent_names: _RecentTokenNames) -> None:
     """PumpPortalからのメッセージを受け取り、卒業(migration)イベントを検知する。
 
     subscribeTokenTradeは使っていないため、このWebSocket上で流れてくる
@@ -97,29 +123,35 @@ async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher) -> None
     どちらか。PumpPortal側の正確なフィールド名は未確認のため、"create"
     以外は全てmigrationとみなし、生のpayloadをDEBUGログへ残す(想定と
     フィールド名が違った場合、ここを見て調整する)。
+
+    migrationイベント自体には銘柄名/シンボルが含まれないため、直前の
+    createイベントで見た内容をrecent_namesから補う。
     """
     async for message in client.messages():
         mint = message.get("mint")
         if not mint:
             continue
+        mint = str(mint)
 
         tx_type = message.get("txType")
+        name = str(message.get("name", ""))
+        symbol = str(message.get("symbol", ""))
+
         if tx_type == "create":
+            recent_names.remember(mint, name, symbol)
             logger.debug(
                 "main: 新規トークン作成を検知(まだDEX卒業前) mint=%s name=%s symbol=%s",
                 mint,
-                message.get("name", ""),
-                message.get("symbol", ""),
+                name,
+                symbol,
             )
             continue
 
+        if not name and not symbol:
+            name, symbol = recent_names.get(mint)
+
         logger.debug("main: migration想定イベントを受信 raw=%s", message)
-        token = watcher.start_tracking(
-            mint=str(mint),
-            name=str(message.get("name", "")),
-            symbol=str(message.get("symbol", "")),
-            now=time.time(),
-        )
+        token = watcher.start_tracking(mint=mint, name=name, symbol=symbol, now=time.time())
         logger.info(
             "main: DEX卒業を検知しました mint=%s name=%s symbol=%s",
             token.mint,
@@ -218,6 +250,7 @@ async def async_main() -> None:
     watcher = TokenWatcher()
     outcomes = OutcomeTracker()
     stats = DailyStats()
+    recent_names = _RecentTokenNames()
     logger.info(
         "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s discord_enabled=%s",
         config.MIGRATION_CHECKPOINTS_SECONDS,
@@ -233,7 +266,7 @@ async def async_main() -> None:
         )
 
     await asyncio.gather(
-        _consume_loop(client, watcher),
+        _consume_loop(client, watcher, recent_names),
         _checkpoint_loop(watcher, outcomes, stats),
         _outcome_loop(outcomes),
         _stats_loop(stats),
