@@ -38,6 +38,10 @@ class TrackedOutcome:
     notified_score: int
     market_cap_at_notify_usd: float
     last_market_cap_usd: float
+    # RugCheckで判明していた発行者ウォレットアドレス(空の場合もある)。
+    # 大暴落を検出した際にcreator_blocklistへ登録するために使う
+    # (main.py参照)。
+    creator: str = ""
     checkpoint_index: int = 0
     finished: bool = False
 
@@ -63,6 +67,7 @@ class OutcomeTracker:
         score: int,
         market_cap_usd: float,
         now: float,
+        creator: str = "",
     ) -> None:
         """通知が発生した瞬間に1回呼び出し、結果追跡を開始する。
 
@@ -80,6 +85,7 @@ class OutcomeTracker:
             notified_score=score,
             market_cap_at_notify_usd=market_cap_usd,
             last_market_cap_usd=market_cap_usd,
+            creator=creator,
         )
 
     def update_market_cap(self, mint: str, market_cap_usd: float) -> None:
@@ -99,8 +105,12 @@ class OutcomeTracker:
                 due.append(outcome)
         return due
 
-    def record_and_advance(self, outcome: TrackedOutcome) -> None:
-        """チェックポイントの結果を1件JSONLへ追記し、次のチェックポイントへ進める。"""
+    def record_and_advance(self, outcome: TrackedOutcome) -> float:
+        """チェックポイントの結果を1件JSONLへ追記し、次のチェックポイントへ進める。
+
+        通知時点からの変化率(%)を返す(呼び出し側がcreator_blocklistへの
+        登録要否を判断するために使う。main.py参照)。
+        """
         checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
         if outcome.market_cap_at_notify_usd > 0:
             change_pct = (
@@ -127,6 +137,8 @@ class OutcomeTracker:
         outcome.checkpoint_index += 1
         if outcome.checkpoint_index >= len(config.OUTCOME_CHECKPOINTS_SECONDS):
             outcome.finished = True
+
+        return change_pct
 
     def forget(self, mint: str) -> None:
         self._outcomes.pop(mint, None)

@@ -80,21 +80,47 @@ def test_apply_snapshot_handles_missing_nested_fields():
 def test_apply_rugcheck_report_marks_safe_when_no_danger_reason():
     watcher = TokenWatcher()
     token = _start(watcher)
-    watcher.apply_rugcheck_report(token, None)
+    watcher.apply_rugcheck_report(token, None, "CreatorAddr1")
 
     assert token.rugcheck_checked is True
     assert token.rugcheck_danger is False
     assert token.rugcheck_danger_reason == ""
+    assert token.creator == "CreatorAddr1"
 
 
 def test_apply_rugcheck_report_marks_danger_when_reason_given():
     watcher = TokenWatcher()
     token = _start(watcher)
-    watcher.apply_rugcheck_report(token, "Single holder ownership")
+    watcher.apply_rugcheck_report(token, "Single holder ownership", "CreatorAddr1")
 
     assert token.rugcheck_checked is True
     assert token.rugcheck_danger is True
     assert token.rugcheck_danger_reason == "Single holder ownership"
+
+
+def test_apply_rugcheck_report_handles_missing_creator():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_rugcheck_report(token, None, None)
+
+    assert token.creator == ""
+
+
+def test_apply_creator_block_sets_reason():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_creator_block(token, "通知後に-95%下落")
+
+    assert token.blocked_creator_reason == "通知後に-95%下落"
+
+
+def test_apply_creator_block_clears_reason_when_none():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_creator_block(token, "some reason")
+    watcher.apply_creator_block(token, None)
+
+    assert token.blocked_creator_reason == ""
 
 
 def test_due_for_checkpoint_respects_first_checkpoint_of_zero():

@@ -61,3 +61,19 @@ def extract_danger_reason(report: dict) -> str | None:
             name = risk.get("name") or "danger risk"
             return str(name)
     return None
+
+
+def extract_creator(report: dict) -> str | None:
+    """レポートから発行者(creator)のウォレットアドレスを返す。
+
+    取得できなければNoneを返す(creator_blocklist.py参照。この値を使って
+    「同じ発行者が名前を変えて再発行してきた」ケースを検出する)。
+    """
+    creator = report.get("creator")
+    if isinstance(creator, str) and creator:
+        return creator
+    if isinstance(creator, dict):
+        address = creator.get("address")
+        if isinstance(address, str) and address:
+            return address
+    return None

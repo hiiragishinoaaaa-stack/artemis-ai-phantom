@@ -86,8 +86,10 @@ def _score_price_change_m5(token: TrackedToken) -> ScoreComponent:
 # RugCheckが"danger"レベルのリスク(mint権限が発行者に残っている、上位
 # 保有者への極端な集中、単一保有者が大半保有、等)を検出した場合、他の
 # 項目がどれだけ高くても通知させないための強いペナルティ。他の項目の
-# 合計が現実的に届く範囲(最大100点)を確実に相殺できる値にしている。
-_RUGCHECK_DANGER_PENALTY = -100
+# 合計がどれだけ増えても(将来項目が増えても)確実に相殺できるよう、
+# 現実的に届く範囲より大きく負にしている(compute_score()がmax(0, ...)
+# でクランプするため、実際のスコア下限は常に0)。
+_RUGCHECK_DANGER_PENALTY = -1000
 
 
 def _score_rugcheck_safety(token: TrackedToken) -> ScoreComponent:
@@ -102,6 +104,23 @@ def _score_rugcheck_safety(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("RugCheckセーフティ", 10, "危険フラグなし(+10)")
 
 
+# 過去に危険判定・大暴落があったトークンの発行者が、名前を変えて別の
+# トークンを再発行してきた場合、他の項目がどれだけ高くても通知させない
+# ための強いペナルティ(_RUGCHECK_DANGER_PENALTYと同じ考え方)。
+_CREATOR_BLOCKLIST_PENALTY = -1000
+
+
+def _score_creator_blocklist(token: TrackedToken) -> ScoreComponent:
+    if token.blocked_creator_reason:
+        return ScoreComponent(
+            "発行者ブラックリスト",
+            _CREATOR_BLOCKLIST_PENALTY,
+            f"過去に問題のあった発行者による再発行を検出: {token.blocked_creator_reason}"
+            "(スコアを強制的に0点扱いにします)",
+        )
+    return ScoreComponent("発行者ブラックリスト", 0, "ブラックリスト該当なし")
+
+
 # 将来項目を追加する場合はここに関数を1つ足すだけでよい(TrackedTokenを
 # 受け取りScoreComponentを返す関数であること。他の項目とは完全に独立)。
 _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
@@ -111,6 +130,7 @@ _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
     _score_liquidity,
     _score_price_change_m5,
     _score_rugcheck_safety,
+    _score_creator_blocklist,
 ]
 
 

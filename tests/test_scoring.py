@@ -28,13 +28,14 @@ def _token(**overrides):
     token.rugcheck_checked = overrides.get("rugcheck_checked", False)
     token.rugcheck_danger = overrides.get("rugcheck_danger", False)
     token.rugcheck_danger_reason = overrides.get("rugcheck_danger_reason", "")
+    token.blocked_creator_reason = overrides.get("blocked_creator_reason", "")
     return token
 
 
 def test_compute_score_all_zero_when_nothing_happened():
     result = scoring.compute_score(_token())
     assert result.total == 0
-    assert len(result.components) == 6
+    assert len(result.components) == 7
 
 
 @pytest.mark.parametrize(
@@ -125,6 +126,31 @@ def test_compute_score_forces_zero_when_rugcheck_danger_detected_even_with_max_o
         rugcheck_checked=True,
         rugcheck_danger=True,
         rugcheck_danger_reason="Mint authority still active",
+    )
+    result = scoring.compute_score(token)
+    assert result.total == 0
+
+
+def test_score_creator_blocklist_no_match_gives_no_points():
+    assert scoring._score_creator_blocklist(_token(blocked_creator_reason="")).points == 0
+
+
+def test_score_creator_blocklist_match_gives_large_negative_penalty():
+    component = scoring._score_creator_blocklist(_token(blocked_creator_reason="通知後に-95%下落"))
+    assert component.points < 0
+    assert "通知後に-95%下落" in component.detail
+
+
+def test_compute_score_forces_zero_when_creator_blocklisted_even_with_max_other_components():
+    token = _token(
+        buys_m5=20,
+        sells_m5=0,
+        volume_m5_usd=10000.0,
+        liquidity_usd=10000.0,
+        price_change_m5_pct=100.0,
+        rugcheck_checked=True,
+        rugcheck_danger=False,
+        blocked_creator_reason="RugCheck危険フラグ: Mint authority still active",
     )
     result = scoring.compute_score(token)
     assert result.total == 0

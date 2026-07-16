@@ -45,6 +45,13 @@ class TrackedToken:
     # scoring.pyはこの場合スコアを強制的に0点にする。
     rugcheck_danger: bool = False
     rugcheck_danger_reason: str = ""
+    # RugCheckレポートに含まれる発行者(creator)のウォレットアドレス。
+    # creator_blocklist.CreatorBlocklistでの照合に使う。
+    creator: str = ""
+    # creator_blocklistで「過去に問題のあった発行者」と判定された場合、
+    # その理由が入る(空文字ならブロック対象外)。scoring.pyはこの場合
+    # スコアを強制的に0点にする(名前を変えて再発行されても検出できる)。
+    blocked_creator_reason: str = ""
     # config.MIGRATION_CHECKPOINTS_SECONDSのうち、次に処理すべきチェック
     # ポイントのインデックス。最後まで処理し終えるとfinished=Trueになる。
     checkpoint_index: int = 0
@@ -95,8 +102,8 @@ class TokenWatcher:
             token.dexscreener_url = str(url)
         token.has_pair_data = True
 
-    def apply_rugcheck_report(self, token: TrackedToken, danger_reason: str | None) -> None:
-        """rugcheck_client.extract_danger_reason()の結果をtokenへ反映する。
+    def apply_rugcheck_report(self, token: TrackedToken, danger_reason: str | None, creator: str | None) -> None:
+        """rugcheck_client.extract_danger_reason()/extract_creator()の結果をtokenへ反映する。
 
         danger_reasonがNoneでない場合、"danger"レベルのリスクが検出された
         ことを示す(scoring.pyがこの場合スコアを強制的に0点にする)。
@@ -104,6 +111,12 @@ class TokenWatcher:
         token.rugcheck_checked = True
         token.rugcheck_danger = danger_reason is not None
         token.rugcheck_danger_reason = danger_reason or ""
+        if creator:
+            token.creator = creator
+
+    def apply_creator_block(self, token: TrackedToken, reason: str | None) -> None:
+        """creator_blocklist.CreatorBlocklist.is_blocked()の結果をtokenへ反映する。"""
+        token.blocked_creator_reason = reason or ""
 
     def due_for_checkpoint(self, now: float) -> list[TrackedToken]:
         """次のチェックポイント時刻を過ぎ、まだそのチェックポイントを処理していない

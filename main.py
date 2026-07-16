@@ -30,6 +30,7 @@ import dexscreener_client
 import discord_notifier
 import rugcheck_client
 import scoring
+from creator_blocklist import CreatorBlocklist
 from logger import setup_logger
 from outcome_tracker import OutcomeTracker
 from pumpportal_client import PumpPortalClient
@@ -175,7 +176,9 @@ def _log_score(token: TrackedToken, score: scoring.ScoreResult, elapsed: int, ti
     )
 
 
-async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stats: DailyStats) -> None:
+async def _checkpoint_loop(
+    watcher: TokenWatcher, outcomes: OutcomeTracker, stats: DailyStats, blocklist: CreatorBlocklist
+) -> None:
     """定期的にチェックポイントを迎えたトークンをDexScreenerで再取得・再評価する。"""
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
@@ -196,7 +199,8 @@ async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stat
                 report = await asyncio.to_thread(rugcheck_client.fetch_risk_report, token.mint)
                 if report is not None:
                     danger_reason = rugcheck_client.extract_danger_reason(report)
-                    watcher.apply_rugcheck_report(token, danger_reason)
+                    creator = rugcheck_client.extract_creator(report)
+                    watcher.apply_rugcheck_report(token, danger_reason, creator)
                     if danger_reason:
                         logger.info(
                             "main: RugCheckで危険フラグを検出しました mint=%s symbol=%s reason=%s",
@@ -204,6 +208,23 @@ async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stat
                             token.symbol,
                             danger_reason,
                         )
+                        if token.creator:
+                            # 発行者をブロックリストへ記録しておき、名前を
+                            # 変えて再発行してきても次回から即0点にする。
+                            blocklist.record(token.creator, f"RugCheck危険フラグ: {danger_reason}")
+
+            if token.creator:
+                block_reason = blocklist.is_blocked(token.creator)
+                watcher.apply_creator_block(token, block_reason)
+                if block_reason and not token.rugcheck_danger:
+                    logger.info(
+                        "main: ブロックリスト登録済みの発行者による再発行を検出しました "
+                        "mint=%s symbol=%s creator=%s reason=%s",
+                        token.mint,
+                        token.symbol,
+                        token.creator,
+                        block_reason,
+                    )
 
             score = scoring.compute_score(token)
             tier = scoring.tier_for_score(score.total)
@@ -229,6 +250,7 @@ async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stat
                         score=score.total,
                         market_cap_usd=token.market_cap_usd,
                         now=now,
+                        creator=token.creator,
                     )
 
             watcher.mark_checkpoint_done(token)
@@ -238,8 +260,12 @@ async def _checkpoint_loop(watcher: TokenWatcher, outcomes: OutcomeTracker, stat
                 watcher.forget(token.mint)
 
 
-async def _outcome_loop(outcomes: OutcomeTracker) -> None:
-    """通知済みトークンの結果(30分/1時間/24時間後の時価総額変化)をDexScreenerから取得・記録する。"""
+async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -> None:
+    """通知済みトークンの結果(30分/1時間/24時間後の時価総額変化)をDexScreenerから取得・記録する。
+
+    通知時点から大暴落(config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT以上の
+    下落)したと判明した場合、その発行者をブロックリストへ追加する。
+    """
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         now = time.time()
@@ -249,7 +275,16 @@ async def _outcome_loop(outcomes: OutcomeTracker) -> None:
                 market_cap = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
                 outcomes.update_market_cap(outcome.mint, market_cap)
 
-            outcomes.record_and_advance(outcome)
+            change_pct = outcomes.record_and_advance(outcome)
+            if outcome.creator and change_pct <= config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT:
+                logger.info(
+                    "main: 通知後の大暴落を検出しました mint=%s symbol=%s change_pct=%.1f%%",
+                    outcome.mint,
+                    outcome.symbol,
+                    change_pct,
+                )
+                blocklist.record(outcome.creator, f"通知後に{change_pct:.0f}%下落")
+
             if outcome.finished:
                 outcomes.forget(outcome.mint)
 
@@ -268,13 +303,16 @@ async def async_main() -> None:
     outcomes = OutcomeTracker()
     stats = DailyStats()
     recent_names = _RecentTokenNames()
+    blocklist = CreatorBlocklist()
     logger.info(
-        "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s discord_enabled=%s",
+        "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s "
+        "discord_enabled=%s creator_blocklist=%d件",
         config.MIGRATION_CHECKPOINTS_SECONDS,
         config.HIGH_SCORE_THRESHOLD,
         config.WATCH_SCORE_THRESHOLD,
         config.LOW_SCORE_THRESHOLD,
         config.DISCORD_ENABLED,
+        len(blocklist),
     )
     if not config.DISCORD_ENABLED or not config.DISCORD_WEBHOOK_URL:
         logger.warning(
@@ -284,8 +322,8 @@ async def async_main() -> None:
 
     await asyncio.gather(
         _consume_loop(client, watcher, recent_names),
-        _checkpoint_loop(watcher, outcomes, stats),
-        _outcome_loop(outcomes),
+        _checkpoint_loop(watcher, outcomes, stats, blocklist),
+        _outcome_loop(outcomes, blocklist),
         _stats_loop(stats),
     )
 

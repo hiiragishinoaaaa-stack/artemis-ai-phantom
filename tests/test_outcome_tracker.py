@@ -15,7 +15,13 @@ def _patch_config(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "OUTCOMES_FILE_PATH", tmp_path / "outcomes.jsonl")
 
 
-def _register(tracker: OutcomeTracker, mint: str = "MINT1", now: float = 1000.0, market_cap_usd: float = 10000.0):
+def _register(
+    tracker: OutcomeTracker,
+    mint: str = "MINT1",
+    now: float = 1000.0,
+    market_cap_usd: float = 10000.0,
+    creator: str = "",
+):
     tracker.register(
         mint=mint,
         name="Test Coin",
@@ -24,6 +30,7 @@ def _register(tracker: OutcomeTracker, mint: str = "MINT1", now: float = 1000.0,
         score=85,
         market_cap_usd=market_cap_usd,
         now=now,
+        creator=creator,
     )
 
 
@@ -64,8 +71,9 @@ def test_record_and_advance_writes_jsonl_and_advances_checkpoint():
     tracker.update_market_cap("MINT1", 15000.0)  # +50%
 
     outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
-    tracker.record_and_advance(outcome)
+    change_pct = tracker.record_and_advance(outcome)
 
+    assert change_pct == pytest.approx(50.0)
     assert outcome.checkpoint_index == 1
     assert outcome.finished is False
 
@@ -75,6 +83,18 @@ def test_record_and_advance_writes_jsonl_and_advances_checkpoint():
     assert record["mint"] == "MINT1"
     assert record["checkpoint_seconds"] == 1800
     assert record["change_pct"] == pytest.approx(50.0)
+
+
+def test_record_and_advance_reports_large_negative_change_on_crash():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0, market_cap_usd=10000.0, creator="CreatorAddr1")
+    tracker.update_market_cap("MINT1", 500.0)  # -95%
+
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    change_pct = tracker.record_and_advance(outcome)
+
+    assert change_pct == pytest.approx(-95.0)
+    assert outcome.creator == "CreatorAddr1"
 
 
 def test_record_and_advance_marks_finished_after_last_checkpoint():

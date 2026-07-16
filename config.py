@@ -108,6 +108,21 @@ HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 75)
 WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 70)
 LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 35)
 
+# --- 発行者ブラックリスト(creator_blocklist.py) ---
+# RugCheckで危険判定が出た、または通知後に大暴落したトークンの発行者
+# ウォレットアドレスを記録し、次回以降は名前を変えて再発行されても即座に
+# スコアを0点にする(外部サービス不要、うち自身の観察結果のみで完結)。
+_creator_blocklist_file_path_env = os.getenv("CREATOR_BLOCKLIST_FILE_PATH")
+CREATOR_BLOCKLIST_FILE_PATH = (
+    Path(_creator_blocklist_file_path_env)
+    if _creator_blocklist_file_path_env
+    else BASE_DIR / "logs" / "creator_blocklist.json"
+)
+# 通知後、時価総額がこの割合(マイナス値)以上下落したら「暴落(ラグ濃厚)」
+# とみなし、その発行者をブロックリストへ追加する(outcome_tracker連携、
+# main.py参照)。
+CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT = _env_float("CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT", -90.0)
+
 # --- 通知後の結果トラッキング(outcome_tracker.py) ---
 # WATCH/HIGHとして通知したトークンは、それ以降もこの秒数リストの経過時点
 # ごとにDexScreenerから時価総額を取得し、通知時点からの変化率を
