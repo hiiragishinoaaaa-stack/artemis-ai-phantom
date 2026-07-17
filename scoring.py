@@ -56,6 +56,17 @@ def _score_buy_sell_ratio(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("直近5分のBuy/Sell比率", 0, f"買い{buy}/売り{sell}(売り優勢または同数: 加点なし)")
 
 
+def _score_unique_buyers_m5(token: TrackedToken) -> ScoreComponent:
+    count = token.unique_buyers_m5
+    if count >= 10:
+        return ScoreComponent("直近5分のユニーク買い手", 20, f"ユニーク買い手{count}人(10人以上: +20)")
+    if count >= 5:
+        return ScoreComponent("直近5分のユニーク買い手", 10, f"ユニーク買い手{count}人(5人以上: +10)")
+    if count >= 2:
+        return ScoreComponent("直近5分のユニーク買い手", 5, f"ユニーク買い手{count}人(2人以上: +5)")
+    return ScoreComponent("直近5分のユニーク買い手", 0, f"ユニーク買い手{count}人(2人未満: 加点なし)")
+
+
 def _score_volume_m5(token: TrackedToken) -> ScoreComponent:
     volume = token.volume_m5_usd
     threshold = config.MIN_VOLUME_USD_FOR_SCORE
@@ -126,6 +137,7 @@ def _score_creator_blocklist(token: TrackedToken) -> ScoreComponent:
 _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
     _score_buys_m5,
     _score_buy_sell_ratio,
+    _score_unique_buyers_m5,
     _score_volume_m5,
     _score_liquidity,
     _score_price_change_m5,

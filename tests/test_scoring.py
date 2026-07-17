@@ -22,6 +22,7 @@ def _token(**overrides):
     token = watcher.start_tracking(mint="MINT1", name="Test", symbol="TEST", now=1000.0)
     token.buys_m5 = overrides.get("buys_m5", 0)
     token.sells_m5 = overrides.get("sells_m5", 0)
+    token.unique_buyers_m5 = overrides.get("unique_buyers_m5", 0)
     token.volume_m5_usd = overrides.get("volume_m5_usd", 0.0)
     token.liquidity_usd = overrides.get("liquidity_usd", 0.0)
     token.price_change_m5_pct = overrides.get("price_change_m5_pct", 0.0)
@@ -35,7 +36,7 @@ def _token(**overrides):
 def test_compute_score_all_zero_when_nothing_happened():
     result = scoring.compute_score(_token())
     assert result.total == 0
-    assert len(result.components) == 7
+    assert len(result.components) == 8
 
 
 @pytest.mark.parametrize(
@@ -63,6 +64,15 @@ def test_score_buy_sell_ratio_zero_zero():
 )
 def test_score_buy_sell_ratio_tiers(buys, sells, expected_points):
     component = scoring._score_buy_sell_ratio(_token(buys_m5=buys, sells_m5=sells))
+    assert component.points == expected_points
+
+
+@pytest.mark.parametrize(
+    "unique_buyers,expected_points",
+    [(0, 0), (1, 0), (2, 5), (4, 5), (5, 10), (9, 10), (10, 20), (30, 20)],
+)
+def test_score_unique_buyers_m5_tiers(unique_buyers, expected_points):
+    component = scoring._score_unique_buyers_m5(_token(unique_buyers_m5=unique_buyers))
     assert component.points == expected_points
 
 
