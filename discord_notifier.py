@@ -34,13 +34,13 @@ _TIER_EMOJI = {
 }
 
 
-def _send(content: str) -> None:
-    if not config.DISCORD_ENABLED or not config.DISCORD_WEBHOOK_URL:
+def _send(content: str, webhook_url: str) -> None:
+    if not config.DISCORD_ENABLED or not webhook_url:
         return
 
     body = json.dumps({"content": content}).encode("utf-8")
     req = urllib.request.Request(
-        config.DISCORD_WEBHOOK_URL,
+        webhook_url,
         data=body,
         headers={"Content-Type": "application/json", "User-Agent": _USER_AGENT},
         method="POST",
@@ -75,6 +75,10 @@ def notify_score_update(
     アドレス・Phantomで開くリンクのみの最小限にしている(2026-07、
     ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
     ログ側に残る)。
+
+    スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
+    DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
+    送る(未設定なら送らない)。
     """
     emoji = _TIER_EMOJI.get(tier, tier)
     lines = [f"{emoji} {tier} Score: {score.total}/100"]
@@ -87,4 +91,8 @@ def notify_score_update(
 
     lines.append(f"`{token.mint}`")
     lines.append(_phantom_link(token.mint))
-    _send("\n".join(lines))
+    content = "\n".join(lines)
+
+    _send(content, config.DISCORD_WEBHOOK_URL)
+    if score.total >= 100 and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
+        _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL)
