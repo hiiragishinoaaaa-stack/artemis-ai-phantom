@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 
 import config
-from scoring import UNIQUE_BUYERS_M5_TIER_THRESHOLDS, ScoreResult
+from scoring import ScoreResult, star_count_for_unique_buyers
 from token_watcher import TrackedToken
 
 logger = logging.getLogger("phantom_sniper")
@@ -51,16 +51,9 @@ def _send(content: str, webhook_url: str) -> None:
         logger.warning("discord_notifier: Discordへの通知送信に失敗しました: %s", exc)
 
 
-def _unique_buyer_stars(unique_buyers_m5: int) -> str:
-    """直近5分のユニーク買い手数を★0〜3個で表す(scoring.UNIQUE_BUYERS_M5_TIER_THRESHOLDSと同じ区切り)。"""
-    tier2, tier5, tier10 = UNIQUE_BUYERS_M5_TIER_THRESHOLDS
-    if unique_buyers_m5 >= tier10:
-        return "⭐⭐⭐"
-    if unique_buyers_m5 >= tier5:
-        return "⭐⭐"
-    if unique_buyers_m5 >= tier2:
-        return "⭐"
-    return ""
+def _stars_display(unique_buyers_m5: int) -> str:
+    """直近5分のユニーク買い手数を★0〜3個の文字列で表す(scoring.star_count_for_unique_buyers参照)。"""
+    return "⭐" * star_count_for_unique_buyers(unique_buyers_m5)
 
 
 def _phantom_link(mint: str) -> str:
@@ -88,20 +81,27 @@ def notify_score_update(
     ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
     ログ側に残る)。
 
-    スコアが100点満点、かつユニーク買い手★3つ(直近5分で10人以上)の
-    場合のみ、通常のDISCORD_WEBHOOK_URLに加えてDISCORD_PERFECT_SCORE_WEBHOOK_URL
-    (満点専用チャンネル)にも同じ内容を送る(未設定なら送らない)。
-    スコア100点でも★3つに満たない場合は通常チャンネルのみに送る
-    (少数のウォレットだけで100点まで押し上げたケースを専用チャンネルから
-    除外するため)。
+    スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
+    DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
+    送る(未設定なら送らない。★の数は問わない)。
 
     スコア行の末尾に、直近5分のユニーク買い手数を★0〜3個で表示する
     (少数のウォレットの自作自演ではなく、実際に多くの人が買っている
-    ことをスコアの内訳を見なくても一目でわかるようにするため)。
+    ことをスコアの内訳を見なくても一目でわかるようにするため)。この
+    時点で★3つに届いていなくても、後のチェックポイントで★3つに
+    育ったら`notify_star_upgrade()`が別途追い通知する(main.py参照)。
     """
+    content = _build_message(token, score.total, tier)
+
+    _send(content, config.DISCORD_WEBHOOK_URL)
+    if score.total >= 100 and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
+        _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL)
+
+
+def _build_message(token: TrackedToken, score_total: int, tier: str) -> str:
     emoji = _TIER_EMOJI.get(tier, tier)
-    score_line = f"{emoji} {tier} Score: {score.total}/100"
-    stars = _unique_buyer_stars(token.unique_buyers_m5)
+    score_line = f"{emoji} {tier} Score: {score_total}/100"
+    stars = _stars_display(token.unique_buyers_m5)
     if stars:
         score_line += f" {stars}"
     lines = [score_line]
@@ -114,8 +114,25 @@ def notify_score_update(
 
     lines.append(f"`{token.mint}`")
     lines.append(_phantom_link(token.mint))
-    content = "\n".join(lines)
+    return "\n".join(lines)
 
-    _send(content, config.DISCORD_WEBHOOK_URL)
-    if score.total >= 100 and stars == "⭐⭐⭐" and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
-        _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL)
+
+def notify_star_upgrade(
+    token: TrackedToken,
+    score: ScoreResult,
+    tier: str,
+    elapsed_seconds: int,
+) -> None:
+    """既に通知済みのトークンが、後のチェックポイントでユニーク買い手★3つに
+    到達した瞬間に呼び出す(main.py、1トークンにつき最大1回)。
+
+    最初の通知時点(卒業直後)はDexScreenerの直近5分ウィンドウがまだ
+    始まったばかりで、よほど注目度が高い場合を除き★は付きにくい。
+    その後実際に多くの人が買い始めたことが確認できた瞬間を、通常の
+    DISCORD_WEBHOOK_URLとは別のDISCORD_FOLLOWUP_WEBHOOK_URLへ知らせる
+    (未設定なら送らない)。
+    """
+    if not config.DISCORD_FOLLOWUP_WEBHOOK_URL:
+        return
+    content = "🔥 ユニーク買い手が★3つに到達\n" + _build_message(token, score.total, tier)
+    _send(content, config.DISCORD_FOLLOWUP_WEBHOOK_URL)

@@ -73,6 +73,22 @@ def _score_unique_buyers_m5(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("直近5分のユニーク買い手", 0, f"ユニーク買い手{count}人({tier2}人未満: 加点なし)")
 
 
+def star_count_for_unique_buyers(unique_buyers_m5: int) -> int:
+    """直近5分のユニーク買い手数を0〜3の★段階に変換する(UNIQUE_BUYERS_M5_TIER_THRESHOLDS基準)。
+
+    discord_notifier.py(通知本文の★表示)とmain.py(追い通知の判定)の
+    両方から使う共通ロジック。
+    """
+    tier2, tier5, tier10 = UNIQUE_BUYERS_M5_TIER_THRESHOLDS
+    if unique_buyers_m5 >= tier10:
+        return 3
+    if unique_buyers_m5 >= tier5:
+        return 2
+    if unique_buyers_m5 >= tier2:
+        return 1
+    return 0
+
+
 def _score_volume_m5(token: TrackedToken) -> ScoreComponent:
     volume = token.volume_m5_usd
     threshold = config.MIN_VOLUME_USD_FOR_SCORE

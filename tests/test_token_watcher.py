@@ -38,6 +38,8 @@ def test_start_tracking_begins_tracking():
     assert token.checkpoint_index == 0
     assert token.finished is False
     assert token.notified_tier is None
+    assert token.discord_notified is False
+    assert token.stars_followup_sent is False
     assert token.has_pair_data is False
     assert token.rugcheck_checked is False
     assert token.rugcheck_danger is False

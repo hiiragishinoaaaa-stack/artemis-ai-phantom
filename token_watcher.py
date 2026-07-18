@@ -67,7 +67,15 @@ class TrackedToken:
     finished: bool = False
     # これまでに通知した最高の通知レベル("LOW"/"WATCH"/"HIGH"またはNone)。
     # スコアが上昇して通知ラインを更新した瞬間だけ再通知するために使う。
+    # 注意: LOWの場合もnotified_tierは更新されるが、実際にDiscordへは
+    # 送らない(discord_notified参照)。
     notified_tier: str | None = None
+    # 実際にDiscordへHIGH/WATCH通知を送ったかどうか(notified_tierは
+    # LOWでも更新されるため、これと区別する。main.pyが直接設定する)。
+    discord_notified: bool = False
+    # ★3つ到達の追い通知(main.py参照)を送信済みかどうか。1トークンに
+    # つき最大1回だけ送るためのガード。
+    stars_followup_sent: bool = False
 
 
 class TokenWatcher:

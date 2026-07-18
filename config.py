@@ -138,6 +138,11 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 # スコアが100点満点のトークンだけを追加で通知する専用チャンネルのWebhook
 # URL(通常のDISCORD_WEBHOOK_URLとは別)。未設定なら送らない。
 DISCORD_PERFECT_SCORE_WEBHOOK_URL = os.getenv("DISCORD_PERFECT_SCORE_WEBHOOK_URL", "")
+# 既に通知済みのトークンが、後のチェックポイントでユニーク買い手★3つに
+# 到達した瞬間に送る「追い通知」専用のWebhook URL(通常のDISCORD_WEBHOOK_URL
+# とは別)。1トークンにつき最大1回だけ送る(discord_notifier.notify_star_
+# upgrade/main.py参照)。未設定なら送らない。
+DISCORD_FOLLOWUP_WEBHOOK_URL = os.getenv("DISCORD_FOLLOWUP_WEBHOOK_URL", "")
 # 通知に含めるPhantomアプリの起動リンク(https://phantom.com/tokens/solana/
 # {mint})に付ける紹介コード(個人に紐づく値のため、コードに直書きせず
 # .envで設定する。未設定でもリンク自体は生成される)。

@@ -12,6 +12,12 @@ CHECKPOINTS_SECONDS(既定0/60/300/900秒)の各時点でDexScreenerの公開API
 通知したトークンはoutcome_tracker.pyにより30分/1時間/24時間後の時価総額
 変化も記録する(将来、どのスコア項目が実際に有効だったか分析するため)。
 
+初回通知の時点(卒業直後)はDexScreenerの直近5分ウィンドウがまだ始まった
+ばかりで、ユニーク買い手★3つに届いていないことが多い。後のチェックポイント
+で実際に多くの人が買い始めて★3つに到達したことが確認できたら、通常通知とは
+別のDISCORD_FOLLOWUP_WEBHOOK_URLへ1トークンにつき最大1回だけ追い通知する
+(_decide_notification_action参照)。
+
 自動売買・ウォレット操作は一切行わない。あくまで人間が判断するための
 情報提供ツール(詳細はREADME.md参照)。
 """
@@ -162,6 +168,36 @@ async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, recent_
         )
 
 
+def _decide_notification_action(
+    is_tier_upgrade: bool,
+    tier: str | None,
+    discord_notified: bool,
+    stars_followup_sent: bool,
+    star_count: int,
+) -> str | None:
+    """このチェックポイントで取るべきDiscord通知アクションを返す。
+
+    ネットワーク・時刻取得に一切依存しない純粋関数にして、_checkpoint_loop
+    本体を実際に動かさずに分岐の妥当性を単体テストできるようにしている
+    (tests/test_main.py参照。token_watcher.py等と同じ設計方針)。
+
+    戻り値:
+    - "primary": 初めてHIGH/WATCHへ到達した瞬間の通常通知
+      (notify_score_update)を送る。
+    - "followup": 既に通知済みのトークンが後のチェックポイントで
+      ユニーク買い手★3つに到達した瞬間の追い通知(notify_star_upgrade)を
+      1トークンにつき最大1回だけ送る。discord_notified(=実際にHIGH/WATCH
+      通知を送ったことがある)を条件にしているため、LOW止まりで一度も
+      Discordへ送っていないトークンには発火しない。
+    - None: 何もしない。
+    """
+    if is_tier_upgrade:
+        return "primary" if tier in ("HIGH", "WATCH") else None
+    if discord_notified and not stars_followup_sent and star_count >= 3:
+        return "followup"
+    return None
+
+
 def _log_score(token: TrackedToken, score: scoring.ScoreResult, elapsed: int, tier: str | None) -> None:
     reasons = "; ".join(c.detail for c in score.components if c.points <= 0)
     logger.debug(
@@ -231,28 +267,51 @@ async def _checkpoint_loop(
             tier = scoring.tier_for_score(score.total)
             _log_score(token, score, elapsed, tier)
 
-            if tier is not None and scoring.is_upgrade(token.notified_tier, tier):
+            is_tier_upgrade = tier is not None and scoring.is_upgrade(token.notified_tier, tier)
+            star_count = scoring.star_count_for_unique_buyers(token.unique_buyers_m5)
+            action = _decide_notification_action(
+                is_tier_upgrade, tier, token.discord_notified, token.stars_followup_sent, star_count
+            )
+
+            if is_tier_upgrade:
                 token.notified_tier = tier
-                if tier in ("HIGH", "WATCH"):
-                    logger.info(
-                        "main: 通知ラインを超えました mint=%s symbol=%s score=%d tier=%s elapsed=%d秒",
-                        token.mint,
-                        token.symbol,
-                        score.total,
-                        tier,
-                        elapsed,
-                    )
-                    await asyncio.to_thread(discord_notifier.notify_score_update, token, score, tier, elapsed)
-                    outcomes.register(
-                        mint=token.mint,
-                        name=token.name,
-                        symbol=token.symbol,
-                        tier=tier,
-                        score=score.total,
-                        market_cap_usd=token.market_cap_usd,
-                        now=now,
-                        creator=token.creator,
-                    )
+
+            if action == "primary":
+                logger.info(
+                    "main: 通知ラインを超えました mint=%s symbol=%s score=%d tier=%s elapsed=%d秒",
+                    token.mint,
+                    token.symbol,
+                    score.total,
+                    tier,
+                    elapsed,
+                )
+                await asyncio.to_thread(discord_notifier.notify_score_update, token, score, tier, elapsed)
+                token.discord_notified = True
+                if star_count >= 3:
+                    # 初回通知の時点で既に★3つなら、通知本文に含まれて
+                    # いるため追い通知は不要(二重送信防止)。
+                    token.stars_followup_sent = True
+                outcomes.register(
+                    mint=token.mint,
+                    name=token.name,
+                    symbol=token.symbol,
+                    tier=tier,
+                    score=score.total,
+                    market_cap_usd=token.market_cap_usd,
+                    now=now,
+                    creator=token.creator,
+                )
+            elif action == "followup":
+                logger.info(
+                    "main: ユニーク買い手が★3つに到達しました(追い通知) mint=%s symbol=%s elapsed=%d秒",
+                    token.mint,
+                    token.symbol,
+                    elapsed,
+                )
+                token.stars_followup_sent = True
+                await asyncio.to_thread(
+                    discord_notifier.notify_star_upgrade, token, score, token.notified_tier, elapsed
+                )
 
             watcher.mark_checkpoint_done(token)
 
