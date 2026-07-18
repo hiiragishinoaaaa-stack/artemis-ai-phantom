@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 
 import config
-from scoring import ScoreResult
+from scoring import UNIQUE_BUYERS_M5_TIER_THRESHOLDS, ScoreResult
 from token_watcher import TrackedToken
 
 logger = logging.getLogger("phantom_sniper")
@@ -51,6 +51,18 @@ def _send(content: str, webhook_url: str) -> None:
         logger.warning("discord_notifier: Discordへの通知送信に失敗しました: %s", exc)
 
 
+def _unique_buyer_stars(unique_buyers_m5: int) -> str:
+    """直近5分のユニーク買い手数を★0〜3個で表す(scoring.UNIQUE_BUYERS_M5_TIER_THRESHOLDSと同じ区切り)。"""
+    tier2, tier5, tier10 = UNIQUE_BUYERS_M5_TIER_THRESHOLDS
+    if unique_buyers_m5 >= tier10:
+        return "⭐⭐⭐"
+    if unique_buyers_m5 >= tier5:
+        return "⭐⭐"
+    if unique_buyers_m5 >= tier2:
+        return "⭐"
+    return ""
+
+
 def _phantom_link(mint: str) -> str:
     """Phantomアプリでこのトークンを直接開くリンクを組み立てる。
 
@@ -79,9 +91,17 @@ def notify_score_update(
     スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
     DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
     送る(未設定なら送らない)。
+
+    スコア行の末尾に、直近5分のユニーク買い手数を★0〜3個で表示する
+    (少数のウォレットの自作自演ではなく、実際に多くの人が買っている
+    ことをスコアの内訳を見なくても一目でわかるようにするため)。
     """
     emoji = _TIER_EMOJI.get(tier, tier)
-    lines = [f"{emoji} {tier} Score: {score.total}/100"]
+    score_line = f"{emoji} {tier} Score: {score.total}/100"
+    stars = _unique_buyer_stars(token.unique_buyers_m5)
+    if stars:
+        score_line += f" {stars}"
+    lines = [score_line]
 
     name = token.name.strip()
     symbol = token.symbol.strip()

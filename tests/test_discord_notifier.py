@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
 import config
 import discord_notifier
 import scoring
@@ -16,9 +18,10 @@ def _sent_content(mock_urlopen) -> str:
     return json.loads(request.data.decode("utf-8"))["content"]
 
 
-def _token(name: str = "Test Coin", symbol: str = "TEST", **overrides):
+def _token(name: str = "Test Coin", symbol: str = "TEST", unique_buyers_m5: int = 0, **overrides):
     watcher = TokenWatcher()
     token = watcher.start_tracking(mint="MintAddr123", name=name, symbol=symbol, now=1000.0)
+    token.unique_buyers_m5 = unique_buyers_m5
     return token
 
 
@@ -151,3 +154,21 @@ def test_notify_score_100_does_not_send_to_perfect_channel_when_unset(monkeypatc
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(), _score(100), "HIGH", 60)
         mock_urlopen.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "unique_buyers_m5,expected_stars",
+    [(0, ""), (1, ""), (2, "⭐"), (4, "⭐"), (5, "⭐⭐"), (9, "⭐⭐"), (10, "⭐⭐⭐"), (30, "⭐⭐⭐")],
+)
+def test_notify_shows_unique_buyer_stars(monkeypatch, unique_buyers_m5, expected_stars):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(unique_buyers_m5=unique_buyers_m5), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        score_line = content.splitlines()[0]
+        if expected_stars:
+            assert score_line.endswith(f" {expected_stars}")
+        else:
+            assert "⭐" not in score_line

@@ -56,15 +56,21 @@ def _score_buy_sell_ratio(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("直近5分のBuy/Sell比率", 0, f"買い{buy}/売り{sell}(売り優勢または同数: 加点なし)")
 
 
+# discord_notifier.pyの★表示もこの区切りに合わせているため、変更する場合は
+# 両方一致させること。
+UNIQUE_BUYERS_M5_TIER_THRESHOLDS: tuple[int, int, int] = (2, 5, 10)
+
+
 def _score_unique_buyers_m5(token: TrackedToken) -> ScoreComponent:
     count = token.unique_buyers_m5
-    if count >= 10:
-        return ScoreComponent("直近5分のユニーク買い手", 20, f"ユニーク買い手{count}人(10人以上: +20)")
-    if count >= 5:
-        return ScoreComponent("直近5分のユニーク買い手", 10, f"ユニーク買い手{count}人(5人以上: +10)")
-    if count >= 2:
-        return ScoreComponent("直近5分のユニーク買い手", 5, f"ユニーク買い手{count}人(2人以上: +5)")
-    return ScoreComponent("直近5分のユニーク買い手", 0, f"ユニーク買い手{count}人(2人未満: 加点なし)")
+    tier2, tier5, tier10 = UNIQUE_BUYERS_M5_TIER_THRESHOLDS
+    if count >= tier10:
+        return ScoreComponent("直近5分のユニーク買い手", 20, f"ユニーク買い手{count}人({tier10}人以上: +20)")
+    if count >= tier5:
+        return ScoreComponent("直近5分のユニーク買い手", 10, f"ユニーク買い手{count}人({tier5}人以上: +10)")
+    if count >= tier2:
+        return ScoreComponent("直近5分のユニーク買い手", 5, f"ユニーク買い手{count}人({tier2}人以上: +5)")
+    return ScoreComponent("直近5分のユニーク買い手", 0, f"ユニーク買い手{count}人({tier2}人未満: 加点なし)")
 
 
 def _score_volume_m5(token: TrackedToken) -> ScoreComponent:
