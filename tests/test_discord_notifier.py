@@ -134,16 +134,27 @@ def test_notify_sends_only_to_main_webhook_when_score_below_100(monkeypatch):
         assert mock_urlopen.call_args[0][0].full_url == "https://discord.com/api/webhooks/main"
 
 
-def test_notify_sends_to_both_webhooks_when_score_is_100(monkeypatch):
+def test_notify_sends_to_both_webhooks_when_score_100_and_three_stars(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/main")
     monkeypatch.setattr(config, "DISCORD_PERFECT_SCORE_WEBHOOK_URL", "https://discord.com/api/webhooks/perfect")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
-        discord_notifier.notify_score_update(_token(), _score(100), "HIGH", 60)
+        discord_notifier.notify_score_update(_token(unique_buyers_m5=10), _score(100), "HIGH", 60)
         assert mock_urlopen.call_count == 2
         urls = {call.args[0].full_url for call in mock_urlopen.call_args_list}
         assert urls == {"https://discord.com/api/webhooks/main", "https://discord.com/api/webhooks/perfect"}
+
+
+def test_notify_score_100_but_fewer_than_three_stars_sends_only_to_main_webhook(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/main")
+    monkeypatch.setattr(config, "DISCORD_PERFECT_SCORE_WEBHOOK_URL", "https://discord.com/api/webhooks/perfect")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(unique_buyers_m5=5), _score(100), "HIGH", 60)
+        mock_urlopen.assert_called_once()
+        assert mock_urlopen.call_args[0][0].full_url == "https://discord.com/api/webhooks/main"
 
 
 def test_notify_score_100_does_not_send_to_perfect_channel_when_unset(monkeypatch):
@@ -152,7 +163,7 @@ def test_notify_score_100_does_not_send_to_perfect_channel_when_unset(monkeypatc
     monkeypatch.setattr(config, "DISCORD_PERFECT_SCORE_WEBHOOK_URL", "")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
-        discord_notifier.notify_score_update(_token(), _score(100), "HIGH", 60)
+        discord_notifier.notify_score_update(_token(unique_buyers_m5=10), _score(100), "HIGH", 60)
         mock_urlopen.assert_called_once()
 
 

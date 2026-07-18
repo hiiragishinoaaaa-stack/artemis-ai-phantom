@@ -88,9 +88,12 @@ def notify_score_update(
     ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
     ログ側に残る)。
 
-    スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
-    DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
-    送る(未設定なら送らない)。
+    スコアが100点満点、かつユニーク買い手★3つ(直近5分で10人以上)の
+    場合のみ、通常のDISCORD_WEBHOOK_URLに加えてDISCORD_PERFECT_SCORE_WEBHOOK_URL
+    (満点専用チャンネル)にも同じ内容を送る(未設定なら送らない)。
+    スコア100点でも★3つに満たない場合は通常チャンネルのみに送る
+    (少数のウォレットだけで100点まで押し上げたケースを専用チャンネルから
+    除外するため)。
 
     スコア行の末尾に、直近5分のユニーク買い手数を★0〜3個で表示する
     (少数のウォレットの自作自演ではなく、実際に多くの人が買っている
@@ -114,5 +117,5 @@ def notify_score_update(
     content = "\n".join(lines)
 
     _send(content, config.DISCORD_WEBHOOK_URL)
-    if score.total >= 100 and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
+    if score.total >= 100 and stars == "⭐⭐⭐" and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
         _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL)
