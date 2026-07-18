@@ -13,9 +13,9 @@ CHECKPOINTS_SECONDS(既定0/60/300/900秒)の各時点でDexScreenerの公開API
 変化も記録する(将来、どのスコア項目が実際に有効だったか分析するため)。
 
 初回通知の時点(卒業直後)はDexScreenerの直近5分ウィンドウがまだ始まった
-ばかりで、ユニーク買い手★3つに届いていないことが多い。後のチェックポイント
-で実際に多くの人が買い始めて★3つに到達したことが確認できたら、通常通知とは
-別のDISCORD_FOLLOWUP_WEBHOOK_URLへ1トークンにつき最大1回だけ追い通知する
+ばかりで、★0のまま通知されることが多い。後のチェックポイントで実際に
+人が買い始めて★1つ以上が確認できたら、通常通知とは別のDISCORD_
+FOLLOWUP_WEBHOOK_URLへ1トークンにつき最大1回だけ追い通知する
 (_decide_notification_action参照)。
 
 自動売買・ウォレット操作は一切行わない。あくまで人間が判断するための
@@ -185,16 +185,17 @@ def _decide_notification_action(
     戻り値:
     - "primary": 初めてHIGH/WATCHへ到達した瞬間の通常通知
       (notify_score_update)を送る。
-    - "followup": 既に通知済みのトークンが後のチェックポイントで
-      ユニーク買い手★3つに到達した瞬間の追い通知(notify_star_upgrade)を
-      1トークンにつき最大1回だけ送る。discord_notified(=実際にHIGH/WATCH
-      通知を送ったことがある)を条件にしているため、LOW止まりで一度も
-      Discordへ送っていないトークンには発火しない。
+    - "followup": 既に通知済みのトークンが後のチェックポイントで初めて
+      ユニーク買い手★1つ以上を確認できた瞬間の追い通知
+      (notify_star_upgrade)を1トークンにつき最大1回だけ送る。
+      discord_notified(=実際にHIGH/WATCH通知を送ったことがある)を
+      条件にしているため、LOW止まりで一度もDiscordへ送っていない
+      トークンには発火しない。
     - None: 何もしない。
     """
     if is_tier_upgrade:
         return "primary" if tier in ("HIGH", "WATCH") else None
-    if discord_notified and not stars_followup_sent and star_count >= 3:
+    if discord_notified and not stars_followup_sent and star_count >= 1:
         return "followup"
     return None
 
@@ -341,8 +342,8 @@ async def _checkpoint_loop(
                     _build_notification_row(token, score, tier, elapsed, "primary"),
                 )
                 token.discord_notified = True
-                if star_count >= 3:
-                    # 初回通知の時点で既に★3つなら、通知本文に含まれて
+                if star_count >= 1:
+                    # 初回通知の時点で既に★1つ以上なら、通知本文に含まれて
                     # いるため追い通知は不要(二重送信防止)。
                     token.stars_followup_sent = True
                 outcomes.register(
@@ -357,7 +358,7 @@ async def _checkpoint_loop(
                 )
             elif action == "followup":
                 logger.info(
-                    "main: ユニーク買い手が★3つに到達しました(追い通知) mint=%s symbol=%s elapsed=%d秒",
+                    "main: ユニーク買い手を確認しました(追い通知) mint=%s symbol=%s elapsed=%d秒",
                     token.mint,
                     token.symbol,
                     elapsed,

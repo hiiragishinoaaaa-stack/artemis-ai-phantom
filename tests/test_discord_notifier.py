@@ -180,6 +180,17 @@ def test_notify_star_upgrade_sends_to_followup_webhook_only(monkeypatch):
         assert "90/100" in content
 
 
+def test_notify_star_upgrade_fires_with_just_one_star(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_FOLLOWUP_WEBHOOK_URL", "https://discord.com/api/webhooks/followup")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_star_upgrade(_token(unique_buyers_m5=2), _score(90), "HIGH", 300)
+        content = _sent_content(mock_urlopen)
+        assert "⭐" in content
+        assert "⭐⭐" not in content
+
+
 @pytest.mark.parametrize(
     "unique_buyers_m5,expected_stars",
     [(0, ""), (1, ""), (2, "⭐"), (4, "⭐"), (5, "⭐⭐"), (9, "⭐⭐"), (10, "⭐⭐⭐"), (30, "⭐⭐⭐")],

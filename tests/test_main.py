@@ -45,14 +45,14 @@ def test_remember_evicts_oldest_when_over_capacity():
         (True, "HIGH", False, False, 0, "primary"),
         (True, "WATCH", False, False, 0, "primary"),
         (True, "LOW", False, False, 0, None),
-        # 既に通知済み・★3つ到達・未送信 → 追い通知。
-        (False, None, True, False, 3, "followup"),
+        # 既に通知済み・★1つ以上を確認・未送信 → 追い通知(★1つでも発火する)。
+        (False, None, True, False, 1, "followup"),
+        (False, None, True, False, 2, "followup"),
         (False, "HIGH", True, False, 3, "followup"),
-        # ★がまだ3つに届いていない → 何もしない。
-        (False, None, True, False, 2, None),
+        # ★がまだ0のまま → 何もしない。
         (False, None, True, False, 0, None),
         # 既に追い通知送信済み → 二重送信しない。
-        (False, None, True, True, 3, None),
+        (False, None, True, True, 1, None),
         # 一度もDiscordへ実通知していない(LOW止まり等) → 追い通知もしない。
         (False, None, False, False, 3, None),
     ],

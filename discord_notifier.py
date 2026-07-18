@@ -88,8 +88,8 @@ def notify_score_update(
     スコア行の末尾に、直近5分のユニーク買い手数を★0〜3個で表示する
     (少数のウォレットの自作自演ではなく、実際に多くの人が買っている
     ことをスコアの内訳を見なくても一目でわかるようにするため)。この
-    時点で★3つに届いていなくても、後のチェックポイントで★3つに
-    育ったら`notify_star_upgrade()`が別途追い通知する(main.py参照)。
+    時点で★0でも、後のチェックポイントで★1つ以上に育ったら
+    `notify_star_upgrade()`が別途追い通知する(main.py参照)。
     """
     content = _build_message(token, score.total, tier)
 
@@ -123,16 +123,16 @@ def notify_star_upgrade(
     tier: str,
     elapsed_seconds: int,
 ) -> None:
-    """既に通知済みのトークンが、後のチェックポイントでユニーク買い手★3つに
-    到達した瞬間に呼び出す(main.py、1トークンにつき最大1回)。
+    """既に通知済みのトークンが、後のチェックポイントで初めてユニーク買い手
+    ★1つ以上が確認できた瞬間に呼び出す(main.py、1トークンにつき最大1回)。
 
     最初の通知時点(卒業直後)はDexScreenerの直近5分ウィンドウがまだ
-    始まったばかりで、よほど注目度が高い場合を除き★は付きにくい。
-    その後実際に多くの人が買い始めたことが確認できた瞬間を、通常の
-    DISCORD_WEBHOOK_URLとは別のDISCORD_FOLLOWUP_WEBHOOK_URLへ知らせる
-    (未設定なら送らない)。
+    始まったばかりで、★0のまま通知されることが多い。その後実際に人が
+    買い始めたことが確認できた瞬間を、通常のDISCORD_WEBHOOK_URLとは別の
+    DISCORD_FOLLOWUP_WEBHOOK_URLへ知らせる(未設定なら送らない)。
     """
     if not config.DISCORD_FOLLOWUP_WEBHOOK_URL:
         return
-    content = "🔥 ユニーク買い手が★3つに到達\n" + _build_message(token, score.total, tier)
+    stars = _stars_display(token.unique_buyers_m5)
+    content = f"🔥 ユニーク買い手{stars}を確認\n" + _build_message(token, score.total, tier)
     _send(content, config.DISCORD_FOLLOWUP_WEBHOOK_URL)

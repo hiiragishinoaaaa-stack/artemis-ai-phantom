@@ -330,7 +330,7 @@ function renderNotifications(payload) {
   var html = '';
   rows.forEach(function (r) {
     var time = r.notified_at ? new Date(r.notified_at).toLocaleString('ja-JP') : '-';
-    var typeLabel = r.notification_type === 'followup' ? '<span class="tier-tag followup">追い★3</span>' : '通常';
+    var typeLabel = r.notification_type === 'followup' ? '<span class="tier-tag followup">追い通知</span>' : '通常';
     var tierClass = r.tier === 'HIGH' ? 'tier-HIGH' : (r.tier === 'WATCH' ? 'tier-WATCH' : '');
     var name = r.name || '(名称不明)';
     var stars = '⭐'.repeat(r.star_count || 0);
