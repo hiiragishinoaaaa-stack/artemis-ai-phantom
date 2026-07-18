@@ -25,6 +25,10 @@ _USER_AGENT = "Mozilla/5.0 (compatible; ARTEMIS-Phantom-Sniper/1.0)"
 # RugCheckが危険とみなすリスクフラグのレベル。このレベルが1件でもあれば
 # 危険トークンとみなす(token_watcher.apply_rugcheck_report参照)。
 _DANGER_LEVEL = "danger"
+# dangerほど致命的ではないが注意が必要なリスクフラグのレベル。1件ごとに
+# 小さな減点はするが、通知自体は止めない(scoring._score_rugcheck_warnings
+# 参照。初動の伸びを狙う都合上、疑わしい程度で機会を潰したくないため)。
+_WARN_LEVEL = "warn"
 
 
 def fetch_risk_report(mint: str) -> dict | None:
@@ -61,6 +65,20 @@ def extract_danger_reason(report: dict) -> str | None:
             name = risk.get("name") or "danger risk"
             return str(name)
     return None
+
+
+def extract_warn_count(report: dict) -> int:
+    """レポートのrisks[]のうち"warn"レベルのフラグの件数を返す(0件ならリスクなし)。
+
+    dangerとは別集計(dangerは別途extract_danger_reason()で強制0点扱いに
+    するため、ここでは二重にカウントしない)。
+    """
+    risks = report.get("risks")
+    if not isinstance(risks, list):
+        return 0
+    return sum(
+        1 for risk in risks if isinstance(risk, dict) and str(risk.get("level", "")).lower() == _WARN_LEVEL
+    )
 
 
 def extract_creator(report: dict) -> str | None:

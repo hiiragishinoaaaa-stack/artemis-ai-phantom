@@ -92,6 +92,15 @@ def test_apply_rugcheck_report_marks_safe_when_no_danger_reason():
     assert token.rugcheck_danger is False
     assert token.rugcheck_danger_reason == ""
     assert token.creator == "CreatorAddr1"
+    assert token.rugcheck_warn_count == 0
+
+
+def test_apply_rugcheck_report_records_warn_count():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_rugcheck_report(token, None, "CreatorAddr1", warn_count=2)
+
+    assert token.rugcheck_warn_count == 2
 
 
 def test_apply_rugcheck_report_marks_danger_when_reason_given():

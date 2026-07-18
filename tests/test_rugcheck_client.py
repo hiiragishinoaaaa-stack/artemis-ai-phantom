@@ -63,3 +63,20 @@ def test_extract_danger_reason_returns_name_when_danger_present():
 def test_extract_danger_reason_is_case_insensitive_on_level():
     report = {"risks": [{"name": "Top 10 holders high ownership", "level": "DANGER"}]}
     assert rugcheck_client.extract_danger_reason(report) == "Top 10 holders high ownership"
+
+
+def test_extract_warn_count_returns_zero_when_no_risks():
+    assert rugcheck_client.extract_warn_count({"risks": []}) == 0
+    assert rugcheck_client.extract_warn_count({}) == 0
+
+
+def test_extract_warn_count_counts_only_warn_level():
+    report = {
+        "risks": [
+            {"name": "Mutable metadata", "level": "warn"},
+            {"name": "Low Liquidity", "level": "info"},
+            {"name": "Single holder ownership", "level": "danger"},
+            {"name": "LP not locked", "level": "WARN"},
+        ]
+    }
+    assert rugcheck_client.extract_warn_count(report) == 2

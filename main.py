@@ -200,7 +200,8 @@ async def _checkpoint_loop(
                 if report is not None:
                     danger_reason = rugcheck_client.extract_danger_reason(report)
                     creator = rugcheck_client.extract_creator(report)
-                    watcher.apply_rugcheck_report(token, danger_reason, creator)
+                    warn_count = rugcheck_client.extract_warn_count(report)
+                    watcher.apply_rugcheck_report(token, danger_reason, creator, warn_count)
                     if danger_reason:
                         logger.info(
                             "main: RugCheckで危険フラグを検出しました mint=%s symbol=%s reason=%s",

@@ -121,6 +121,25 @@ def _score_rugcheck_safety(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("RugCheckセーフティ", 10, "危険フラグなし(+10)")
 
 
+# RugCheckの"warn"レベル(dangerほど致命的ではないが注意が必要)のリスク
+# フラグ1件ごとの減点。_RUGCHECK_DANGER_PENALTYと違い、これは通知自体を
+# 止めるほどの強さにはしない(初動の伸びを狙う都合上、疑わしい程度で
+# 機会を潰したくないため、あくまでスコアを少し下げるだけの参考情報)。
+_RUGCHECK_WARN_PENALTY_PER_RISK = -5
+# 件数が増えても際限なく下がらないよう、頭打ちにする(3件以上は同じ扱い)。
+_RUGCHECK_WARN_PENALTY_CAP = -15
+
+
+def _score_rugcheck_warnings(token: TrackedToken) -> ScoreComponent:
+    if not token.rugcheck_checked:
+        return ScoreComponent("RugCheck注意フラグ", 0, "RugCheck未取得(判定なし)")
+    count = token.rugcheck_warn_count
+    if count <= 0:
+        return ScoreComponent("RugCheck注意フラグ", 0, "warn相当のリスクなし")
+    points = max(_RUGCHECK_WARN_PENALTY_CAP, _RUGCHECK_WARN_PENALTY_PER_RISK * count)
+    return ScoreComponent("RugCheck注意フラグ", points, f"warn相当のリスク{count}件({points}点)")
+
+
 # 過去に危険判定・大暴落があったトークンの発行者が、名前を変えて別の
 # トークンを再発行してきた場合、他の項目がどれだけ高くても通知させない
 # ための強いペナルティ(_RUGCHECK_DANGER_PENALTYと同じ考え方)。
@@ -148,6 +167,7 @@ _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
     _score_liquidity,
     _score_price_change_m5,
     _score_rugcheck_safety,
+    _score_rugcheck_warnings,
     _score_creator_blocklist,
 ]
 

@@ -29,6 +29,7 @@ def _token(**overrides):
     token.rugcheck_checked = overrides.get("rugcheck_checked", False)
     token.rugcheck_danger = overrides.get("rugcheck_danger", False)
     token.rugcheck_danger_reason = overrides.get("rugcheck_danger_reason", "")
+    token.rugcheck_warn_count = overrides.get("rugcheck_warn_count", 0)
     token.blocked_creator_reason = overrides.get("blocked_creator_reason", "")
     return token
 
@@ -36,7 +37,7 @@ def _token(**overrides):
 def test_compute_score_all_zero_when_nothing_happened():
     result = scoring.compute_score(_token())
     assert result.total == 0
-    assert len(result.components) == 8
+    assert len(result.components) == 9
 
 
 @pytest.mark.parametrize(
@@ -124,6 +125,35 @@ def test_score_rugcheck_safety_danger_gives_large_negative_penalty():
     )
     assert component.points < 0
     assert "Single holder ownership" in component.detail
+
+
+def test_score_rugcheck_warnings_unchecked_gives_no_points():
+    assert scoring._score_rugcheck_warnings(_token(rugcheck_checked=False)).points == 0
+
+
+def test_score_rugcheck_warnings_checked_with_no_warnings_gives_no_points():
+    assert scoring._score_rugcheck_warnings(_token(rugcheck_checked=True, rugcheck_warn_count=0)).points == 0
+
+
+@pytest.mark.parametrize("warn_count,expected_points", [(1, -5), (2, -10), (3, -15), (4, -15), (10, -15)])
+def test_score_rugcheck_warnings_tiers(warn_count, expected_points):
+    component = scoring._score_rugcheck_warnings(_token(rugcheck_checked=True, rugcheck_warn_count=warn_count))
+    assert component.points == expected_points
+
+
+def test_score_rugcheck_warnings_does_not_block_notification_even_with_max_warnings():
+    token = _token(
+        buys_m5=20,
+        sells_m5=0,
+        volume_m5_usd=10000.0,
+        liquidity_usd=10000.0,
+        price_change_m5_pct=100.0,
+        rugcheck_checked=True,
+        rugcheck_danger=False,
+        rugcheck_warn_count=10,
+    )
+    result = scoring.compute_score(token)
+    assert result.total > 0  # dangerと違い、通知を止めるほどの強さにはしない
 
 
 def test_compute_score_forces_zero_when_rugcheck_danger_detected_even_with_max_other_components():
