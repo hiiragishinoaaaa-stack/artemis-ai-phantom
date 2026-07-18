@@ -148,6 +148,31 @@ DISCORD_FOLLOWUP_WEBHOOK_URL = os.getenv("DISCORD_FOLLOWUP_WEBHOOK_URL", "")
 # .envで設定する。未設定でもリンク自体は生成される)。
 PHANTOM_REFERRAL_ID = os.getenv("PHANTOM_REFERRAL_ID", "")
 
+# --- Supabase(通知履歴・結果トラッキング・発行者ブラックリストの永続化、
+# ダッシュボードの分析用データソース。supabase_client.py参照) ---
+# プロジェクトのURL(例: https://xxxxxxxx.supabase.co)。SupabaseダッシュボードのSettings
+# → API → Project URLで確認できる。未設定ならSupabaseへの書き込み・
+# 読み取りは一切行わない(既存のローカルJSON/JSONLだけで動き続ける)。
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+# service_role キー(秘密鍵、Settings → API → service_role secretで確認)。
+# RLSを無視して読み書きできる強い権限のため、.envにのみ保存しコードや
+# ブラウザに一切埋め込まないこと。anonキーではなくservice_roleを使う
+# 理由は、書き込み専用のバックエンド(このボット自体)からのみ使う想定
+# のため。
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+# --- ダッシュボード(dashboard_server.py、Supabaseのデータを可視化するだけの
+# 読み取り専用サーバー。任意、動いていなくても本体のボット機能には影響しない) ---
+DASHBOARD_SERVER_HOST = os.getenv("DASHBOARD_SERVER_HOST", "0.0.0.0")
+DASHBOARD_SERVER_PORT = _env_int("DASHBOARD_SERVER_PORT", 8790)
+# 簡易保護用のトークン(任意)。設定すると、ブラウザ側で入力しない限り
+# /api/*が401を返す(settings_server.pyのSETTINGS_API_TOKENと同じ方式)。
+# 読み取り専用エンドポイントのみのため未設定でも致命的ではないが、
+# ウォレット関連の情報を含むため信頼できるネットワーク以外には公開しない。
+DASHBOARD_API_TOKEN = os.getenv("DASHBOARD_API_TOKEN", "")
+# ダッシュボードの「直近の通知」一覧に表示する最大件数。
+DASHBOARD_RECENT_NOTIFICATIONS_LIMIT = _env_int("DASHBOARD_RECENT_NOTIFICATIONS_LIMIT", 50)
+
 # --- ログ ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_DIR = BASE_DIR / "logs"

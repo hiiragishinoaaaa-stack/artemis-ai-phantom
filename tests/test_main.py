@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from main import _RecentTokenNames, _decide_notification_action
+from main import _RecentTokenNames, _build_notification_row, _build_outcome_row, _decide_notification_action
+from outcome_tracker import TrackedOutcome
+from scoring import ScoreResult
+from token_watcher import TokenWatcher
 
 
 def test_remember_and_get_round_trip():
@@ -72,3 +75,68 @@ def test_decide_notification_action_ignores_followup_conditions_on_upgrade_check
         star_count=3,
     )
     assert action == "primary"
+
+
+def test_build_notification_row_includes_all_supabase_fields():
+    watcher = TokenWatcher()
+    token = watcher.start_tracking(mint="MINT1", name="Test Coin", symbol="TEST", now=1000.0)
+    token.unique_buyers_m5 = 10
+    token.buys_m5 = 20
+    token.sells_m5 = 2
+    token.volume_m5_usd = 1234.5
+    token.liquidity_usd = 5000.0
+    token.price_change_m5_pct = 42.0
+    token.market_cap_usd = 80000.0
+    token.rugcheck_danger = False
+    token.rugcheck_warn_count = 1
+    token.creator = "CreatorAddr1"
+
+    row = _build_notification_row(token, ScoreResult(total=90, components=[]), "HIGH", 60, "primary")
+
+    assert row == {
+        "mint": "MINT1",
+        "name": "Test Coin",
+        "symbol": "TEST",
+        "notification_type": "primary",
+        "tier": "HIGH",
+        "score": 90,
+        "unique_buyers_m5": 10,
+        "star_count": 3,
+        "buys_m5": 20,
+        "sells_m5": 2,
+        "volume_m5_usd": 1234.5,
+        "liquidity_usd": 5000.0,
+        "price_change_m5_pct": 42.0,
+        "market_cap_usd": 80000.0,
+        "rugcheck_danger": False,
+        "rugcheck_warn_count": 1,
+        "creator": "CreatorAddr1",
+        "elapsed_seconds": 60,
+    }
+
+
+def test_build_outcome_row_matches_supabase_schema():
+    outcome = TrackedOutcome(
+        mint="MINT1",
+        name="Test Coin",
+        symbol="TEST",
+        notified_at=1000.0,
+        notified_tier="HIGH",
+        notified_score=90,
+        market_cap_at_notify_usd=10000.0,
+        last_market_cap_usd=15000.0,
+    )
+
+    row = _build_outcome_row(outcome, checkpoint_seconds=1800, change_pct=50.0)
+
+    assert row == {
+        "mint": "MINT1",
+        "name": "Test Coin",
+        "symbol": "TEST",
+        "notified_tier": "HIGH",
+        "notified_score": 90,
+        "checkpoint_seconds": 1800,
+        "market_cap_at_notify_usd": 10000.0,
+        "market_cap_now_usd": 15000.0,
+        "change_pct": 50.0,
+    }

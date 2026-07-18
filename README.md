@@ -186,6 +186,10 @@ cp .env.example .env
 | `OUTCOMES_FILE_PATH` | `logs/outcomes.jsonl` | 通知後の結果トラッキングの出力先 |
 | `CREATOR_BLOCKLIST_FILE_PATH` | `logs/creator_blocklist.json` | 発行者ブラックリストの出力先 |
 | `CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT` | `-90.0` | 通知後この割合以上下落したら発行者をブロックリストへ追加 |
+| `SUPABASE_URL` | (空) | SupabaseプロジェクトのURL(任意、詳細は下記「Supabase連携」参照) |
+| `SUPABASE_SERVICE_ROLE_KEY` | (空) | Supabaseのservice_roleキー(任意、秘密鍵) |
+| `DASHBOARD_SERVER_PORT` | `8790` | ダッシュボード(`dashboard_server.py`)の待受ポート |
+| `DASHBOARD_API_TOKEN` | (空) | ダッシュボードAPIの簡易保護トークン(任意) |
 
 **通知が多すぎる/少なすぎる場合は、`WATCH_SCORE_THRESHOLD`/
 `HIGH_SCORE_THRESHOLD`を`.env`で調整してから再起動してください。**
@@ -193,6 +197,85 @@ cp .env.example .env
 下げる、または`MIN_VOLUME_USD_FOR_SCORE`/`MIN_LIQUIDITY_USD_FOR_SCORE`を
 下げる。チェックポイント秒数(0/60/300/900)自体は`config.py`の
 `MIGRATION_CHECKPOINTS_SECONDS`を直接編集する。
+
+## Supabase連携(通知履歴・結果の永続化、任意)
+
+`logs/outcomes.jsonl`や`logs/creator_blocklist.json`はローカルファイルで
+完結しているため、Supabaseを使わなくてもボット自体は普通に動く。ただし
+以下がしたい場合はSupabaseの設定を推奨する:
+
+- スマホからいつでも見れる**ダッシュボード**(次のセクション)
+- SQLで自由に**解析**(発行者ごとの成績、★の数と勝率の相関、等)
+
+### セットアップ手順(5分程度)
+
+1. [supabase.com](https://supabase.com/)で無料アカウントを作成し、新規
+   プロジェクトを作成する(リージョンは適当でよい、プロジェクト作成に
+   1〜2分かかる)。
+2. 作成できたら、左メニューの**SQL Editor** → **New query**を開き、この
+   リポジトリの`supabase_schema.sql`の中身を全部貼り付けて**Run**を押す。
+   これで`notifications`/`outcomes`/`creator_blocklist`の3テーブルと、
+   分析用のビュー(`v_notification_latest_outcome`)が1回で全部できる。
+3. 左メニューの**Settings** → **API**を開き、以下2つをコピーして`.env`へ
+   設定する:
+   - **Project URL** → `SUPABASE_URL`
+   - **service_role secret**(下の方にある、`anon`ではなく`service_role`
+     の方) → `SUPABASE_SERVICE_ROLE_KEY`(**秘密鍵。他人に絶対共有しない**)
+4. `phantom-sniper`サービスを再起動する(`sudo systemctl restart phantom-sniper`)。
+   以降、通知・結果・ブロックリスト登録のたびに自動でSupabaseへも書き込まれる
+   (書き込み失敗時はログに警告が出るだけで、ボット本体の動作は止まらない)。
+
+### SQLでの解析例
+
+Supabaseの**SQL Editor**(または**Table Editor**)からいつでも自由に
+クエリできる。例:
+
+```sql
+-- ★の数ごとの、30分後の平均変化率・勝率
+select
+  n.star_count,
+  count(*) as n,
+  avg(o.change_pct) as avg_change_pct,
+  round(100.0 * avg((o.change_pct > 0)::int), 1) as win_rate_pct
+from notifications n
+join outcomes o on o.mint = n.mint and o.checkpoint_seconds = 1800
+where n.notification_type = 'primary'
+group by n.star_count
+order by n.star_count desc;
+
+-- 発行者ごとの通知回数(繰り返し良いコインを出している発行者を探す)
+select creator, count(*) as notif_count, avg(score) as avg_score
+from notifications
+where creator <> ''
+group by creator
+order by notif_count desc
+limit 20;
+```
+
+## ダッシュボード(任意、Supabase連携が必要)
+
+`dashboard_server.py`は、Supabaseに溜まったデータをスマホのブラウザで
+見れるようにするだけの、読み取り専用の軽量サーバー(外部ライブラリ不使用、
+ビルド不要)。止まっていても本体のボット(`main.py`)には一切影響しない。
+
+表示内容: 総通知数・HIGH/WATCH件数・★分布・チェックポイント別勝率
+(30分/1時間/24時間後、`change_pct > 0`の割合)・発行者ブラックリスト件数・
+直近の通知一覧(追い通知も含む)。30秒ごとに自動更新される。
+
+```
+# systemdサービスとして起動(phantom-sniperと同じ.envを共有する)
+sudo cp systemd/phantom-dashboard.service /etc/systemd/system/
+sudo sed -i "s|__PHANTOM_USER__|$(whoami)|g; s|__PHANTOM_HOME__|/opt/artemis|g" /etc/systemd/system/phantom-dashboard.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now phantom-dashboard
+
+# ポートを開ける(VPSのファイアウォール。自分のIPだけに絞るとより安全)
+sudo ufw allow 8790/tcp
+```
+
+起動したら、スマホのブラウザで`http://<VPSのIPアドレス>:8790/`を開く。
+`DASHBOARD_API_TOKEN`を`.env`で設定している場合は、ページ上部の入力欄に
+同じ値を貼って「保存」を押すと認証される(未設定なら何もしなくてよい)。
 
 ## VPSへのデプロイ(systemd)
 
@@ -220,7 +303,8 @@ journalctl -u phantom-sniper -f
 ```
 
 MT5(mt5_ai_trader)とは完全に独立したプロセスなので、同じVPS上で並行して
-動かして問題ない(ファイル・ポートの衝突なし)。
+動かして問題ない(ファイルの衝突なし。ダッシュボードを使う場合のポート
+`8790`もMT5側の`5173`/`8787`とは別なので衝突しない)。
 
 ### 更新(コードを変更した後の再デプロイ)
 
@@ -239,10 +323,12 @@ journalctl -u phantom-sniper -f
 
 ネットワーク不要な部分(`token_watcher.py`のチェックポイント管理、
 `scoring.py`のスコア計算、`discord_notifier.py`/`dexscreener_client.py`/
-`rugcheck_client.py`のリクエスト組み立て、`creator_blocklist.py`の
-永続化)は全てモック・フェイクでテストしている。`pumpportal_client.py`の
-実際の接続・再接続ループは実サーバーが必要なため単体テスト対象外
-(VPSで実際に動かして`journalctl`で確認する)。
+`rugcheck_client.py`/`supabase_client.py`のリクエスト組み立て、
+`creator_blocklist.py`の永続化、`dashboard_analytics.py`の集計ロジック、
+`main.py`の通知アクション判定(`_decide_notification_action`))は全て
+モック・フェイクでテストしている。`pumpportal_client.py`の実際の接続・
+再接続ループと`dashboard_server.py`のHTTPサーバー本体は実サーバーが必要な
+ため単体テスト対象外(VPSで実際に動かして`journalctl`/ブラウザで確認する)。
 
 ```
 .venv/bin/pip install -r requirements-dev.txt

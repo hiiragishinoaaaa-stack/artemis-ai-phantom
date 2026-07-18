@@ -36,9 +36,10 @@ import dexscreener_client
 import discord_notifier
 import rugcheck_client
 import scoring
+import supabase_client
 from creator_blocklist import CreatorBlocklist
 from logger import setup_logger
-from outcome_tracker import OutcomeTracker
+from outcome_tracker import OutcomeTracker, TrackedOutcome
 from pumpportal_client import PumpPortalClient
 from token_watcher import TokenWatcher, TrackedToken
 
@@ -198,6 +199,51 @@ def _decide_notification_action(
     return None
 
 
+def _build_notification_row(
+    token: TrackedToken, score: scoring.ScoreResult, tier: str, elapsed_seconds: int, notification_type: str
+) -> dict:
+    """supabase_client.insert_notification()へ渡す行を組み立てる(supabase_schema.sql
+    のnotificationsテーブル参照)。ネットワーク非依存の純粋関数(tests/test_main.py参照)。
+    """
+    return {
+        "mint": token.mint,
+        "name": token.name,
+        "symbol": token.symbol,
+        "notification_type": notification_type,
+        "tier": tier,
+        "score": score.total,
+        "unique_buyers_m5": token.unique_buyers_m5,
+        "star_count": scoring.star_count_for_unique_buyers(token.unique_buyers_m5),
+        "buys_m5": token.buys_m5,
+        "sells_m5": token.sells_m5,
+        "volume_m5_usd": token.volume_m5_usd,
+        "liquidity_usd": token.liquidity_usd,
+        "price_change_m5_pct": token.price_change_m5_pct,
+        "market_cap_usd": token.market_cap_usd,
+        "rugcheck_danger": token.rugcheck_danger,
+        "rugcheck_warn_count": token.rugcheck_warn_count,
+        "creator": token.creator,
+        "elapsed_seconds": elapsed_seconds,
+    }
+
+
+def _build_outcome_row(outcome: TrackedOutcome, checkpoint_seconds: int, change_pct: float) -> dict:
+    """supabase_client.insert_outcome()へ渡す行を組み立てる(supabase_schema.sqlの
+    outcomesテーブル参照)。ネットワーク非依存の純粋関数(tests/test_main.py参照)。
+    """
+    return {
+        "mint": outcome.mint,
+        "name": outcome.name,
+        "symbol": outcome.symbol,
+        "notified_tier": outcome.notified_tier,
+        "notified_score": outcome.notified_score,
+        "checkpoint_seconds": checkpoint_seconds,
+        "market_cap_at_notify_usd": outcome.market_cap_at_notify_usd,
+        "market_cap_now_usd": outcome.last_market_cap_usd,
+        "change_pct": round(change_pct, 2),
+    }
+
+
 def _log_score(token: TrackedToken, score: scoring.ScoreResult, elapsed: int, tier: str | None) -> None:
     reasons = "; ".join(c.detail for c in score.components if c.points <= 0)
     logger.debug(
@@ -248,7 +294,11 @@ async def _checkpoint_loop(
                         if token.creator:
                             # 発行者をブロックリストへ記録しておき、名前を
                             # 変えて再発行してきても次回から即0点にする。
-                            blocklist.record(token.creator, f"RugCheck危険フラグ: {danger_reason}")
+                            reason = f"RugCheck危険フラグ: {danger_reason}"
+                            blocklist.record(token.creator, reason)
+                            await asyncio.to_thread(
+                                supabase_client.upsert_creator_blocklist, token.creator, reason
+                            )
 
             if token.creator:
                 block_reason = blocklist.is_blocked(token.creator)
@@ -286,6 +336,10 @@ async def _checkpoint_loop(
                     elapsed,
                 )
                 await asyncio.to_thread(discord_notifier.notify_score_update, token, score, tier, elapsed)
+                await asyncio.to_thread(
+                    supabase_client.insert_notification,
+                    _build_notification_row(token, score, tier, elapsed, "primary"),
+                )
                 token.discord_notified = True
                 if star_count >= 3:
                     # 初回通知の時点で既に★3つなら、通知本文に含まれて
@@ -312,6 +366,10 @@ async def _checkpoint_loop(
                 await asyncio.to_thread(
                     discord_notifier.notify_star_upgrade, token, score, token.notified_tier, elapsed
                 )
+                await asyncio.to_thread(
+                    supabase_client.insert_notification,
+                    _build_notification_row(token, score, token.notified_tier, elapsed, "followup"),
+                )
 
             watcher.mark_checkpoint_done(token)
 
@@ -335,7 +393,11 @@ async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -
                 market_cap = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
                 outcomes.update_market_cap(outcome.mint, market_cap)
 
+            checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
             change_pct = outcomes.record_and_advance(outcome)
+            await asyncio.to_thread(
+                supabase_client.insert_outcome, _build_outcome_row(outcome, checkpoint_seconds, change_pct)
+            )
             if outcome.creator and change_pct <= config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT:
                 logger.info(
                     "main: 通知後の大暴落を検出しました mint=%s symbol=%s change_pct=%.1f%%",
@@ -343,7 +405,9 @@ async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -
                     outcome.symbol,
                     change_pct,
                 )
-                blocklist.record(outcome.creator, f"通知後に{change_pct:.0f}%下落")
+                reason = f"通知後に{change_pct:.0f}%下落"
+                blocklist.record(outcome.creator, reason)
+                await asyncio.to_thread(supabase_client.upsert_creator_blocklist, outcome.creator, reason)
 
             if outcome.finished:
                 outcomes.forget(outcome.mint)
@@ -366,13 +430,14 @@ async def async_main() -> None:
     blocklist = CreatorBlocklist()
     logger.info(
         "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s "
-        "discord_enabled=%s creator_blocklist=%d件",
+        "discord_enabled=%s creator_blocklist=%d件 supabase_configured=%s",
         config.MIGRATION_CHECKPOINTS_SECONDS,
         config.HIGH_SCORE_THRESHOLD,
         config.WATCH_SCORE_THRESHOLD,
         config.LOW_SCORE_THRESHOLD,
         config.DISCORD_ENABLED,
         len(blocklist),
+        supabase_client.is_configured(),
     )
     if not config.DISCORD_ENABLED or not config.DISCORD_WEBHOOK_URL:
         logger.warning(

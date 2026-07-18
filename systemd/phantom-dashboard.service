@@ -1,0 +1,14 @@
+[Unit]
+Description=ARTEMIS Phantom Sniper Dashboard (dashboard_server.py, read-only)
+After=network.target
+
+[Service]
+Type=simple
+User=__PHANTOM_USER__
+WorkingDirectory=__PHANTOM_HOME__/artemis-ai-phantom
+ExecStart=__PHANTOM_HOME__/artemis-ai-phantom/.venv/bin/python __PHANTOM_HOME__/artemis-ai-phantom/dashboard_server.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
