@@ -9,6 +9,14 @@
 -- 書き込み・読み取りは常にVPS上のPythonコード(supabase_client.py /
 -- dashboard_server.py)がservice_role키(秘密鍵、.envにのみ保存)経由で
 -- 行う想定で、ブラウザから直接匿名キーでアクセスする使い方はしないため。
+--
+-- 既にこのファイルを一度実行済みの場合(テーブルが既にある場合)、
+-- 新しく追加された列は"create table if not exists"では反映されない。
+-- その場合は以下を代わりに実行すればよい(既存データは消えない):
+--
+--   alter table notifications add column if not exists top10_holders_pct numeric;
+--   alter table notifications add column if not exists has_twitter boolean not null default false;
+--   alter table notifications add column if not exists has_telegram boolean not null default false;
 
 -- --- 通知履歴(HIGH/WATCH通知、および★3つ到達の追い通知) ---
 create table if not exists notifications (
@@ -29,6 +37,9 @@ create table if not exists notifications (
     market_cap_usd numeric not null default 0,
     rugcheck_danger boolean not null default false,
     rugcheck_warn_count int not null default 0,
+    top10_holders_pct numeric,
+    has_twitter boolean not null default false,
+    has_telegram boolean not null default false,
     creator text not null default '',
     elapsed_seconds int not null default 0,
     notified_at timestamptz not null default now()

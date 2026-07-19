@@ -55,6 +55,10 @@ class TrackedToken:
     # 減点に使う(dangerと違い、通知自体は止めない。初動の伸びを狙う
     # 都合上、疑わしい程度で機会を潰したくないため)。
     rugcheck_warn_count: int = 0
+    # RugCheckのtopHolders[]から計算した上位10保有者の合計保有率(%)。
+    # Noneは未取得(判定不能)。scoring.pyはこれを元にラグプル濃度を判定する
+    # (rugcheck_client.extract_top_holders_pct参照)。
+    top10_holders_pct: float | None = None
     # RugCheckレポートに含まれる発行者(creator)のウォレットアドレス。
     # creator_blocklist.CreatorBlocklistでの照合に使う。
     creator: str = ""
@@ -77,6 +81,10 @@ class TrackedToken:
     # ★3つ到達の追い通知(main.py参照)を送信済みかどうか。1トークンに
     # つき最大1回だけ送るためのガード。
     stars_followup_sent: bool = False
+    # DexScreenerのpair.info.socials[]から検出したソーシャルリンクの有無
+    # (通知メッセージへの表示専用。スコアには影響させない)。
+    has_twitter: bool = False
+    has_telegram: bool = False
 
 
 class TokenWatcher:
@@ -124,6 +132,14 @@ class TokenWatcher:
         url = pair.get("url")
         if url:
             token.dexscreener_url = str(url)
+
+        socials = (pair.get("info") or {}).get("socials") or []
+        social_types = {
+            str(entry.get("type", "")).lower() for entry in socials if isinstance(entry, dict)
+        }
+        token.has_twitter = bool(social_types & {"twitter", "x"})
+        token.has_telegram = "telegram" in social_types
+
         token.has_pair_data = True
 
     def apply_unique_buyers(self, token: TrackedToken, count: int | None) -> None:
@@ -142,19 +158,23 @@ class TokenWatcher:
         danger_reason: str | None,
         creator: str | None,
         warn_count: int = 0,
+        top10_holders_pct: float | None = None,
     ) -> None:
-        """rugcheck_client.extract_danger_reason()/extract_creator()/extract_warn_count()の
-        結果をtokenへ反映する。
+        """rugcheck_client.extract_danger_reason()/extract_creator()/extract_warn_count()/
+        extract_top_holders_pct()の結果をtokenへ反映する。
 
         danger_reasonがNoneでない場合、"danger"レベルのリスクが検出された
         ことを示す(scoring.pyがこの場合スコアを強制的に0点にする)。
         warn_countは"danger"より軽いリスクフラグの件数(scoring.pyが件数に
         応じた小さな減点に使う。通知自体は止めない)。
+        top10_holders_pctは上位10保有者の合計保有率(%)、取得できなければ
+        Noneのまま(scoring.pyは判定不能として扱う)。
         """
         token.rugcheck_checked = True
         token.rugcheck_danger = danger_reason is not None
         token.rugcheck_danger_reason = danger_reason or ""
         token.rugcheck_warn_count = warn_count
+        token.top10_holders_pct = top10_holders_pct
         if creator:
             token.creator = creator
 

@@ -56,6 +56,29 @@ def _stars_display(unique_buyers_m5: int) -> str:
     return "⭐" * star_count_for_unique_buyers(unique_buyers_m5)
 
 
+def _holder_concentration_badge(top10_holders_pct: float | None) -> str:
+    """上位10保有者の集中度を⚠️/✅の絵文字1つで表す(scoring._score_holder_concentration
+    と同じ閾値。判定不能または中間(どちらでもない)の場合は空文字を返す)。
+    """
+    if top10_holders_pct is None:
+        return ""
+    if top10_holders_pct >= config.HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT:
+        return config.DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI
+    if top10_holders_pct < config.HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT:
+        return config.DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI
+    return ""
+
+
+def _social_badges(token: TrackedToken) -> str:
+    """検出できたソーシャルリンク(X/Twitter・Telegram)を絵文字で表す。"""
+    badges = []
+    if token.has_twitter:
+        badges.append(config.DISCORD_TWITTER_EMOJI)
+    if token.has_telegram:
+        badges.append(config.DISCORD_TELEGRAM_EMOJI)
+    return "".join(badges)
+
+
 def _phantom_link(mint: str) -> str:
     """Phantomアプリでこのトークンを直接開くリンクを組み立てる。
 
@@ -79,7 +102,10 @@ def notify_score_update(
     コピペ・タップだけで済むことを想定し、内容はスコア・銘柄名・mint
     アドレス・Phantomで開くリンクのみの最小限にしている(2026-07、
     ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
-    ログ側に残る)。
+    ログ側に残る)。スコア行の末尾には★(ユニーク買い手)と上位10保有者
+    集中度の⚠️/✅バッジ、名前行の末尾にはX/Telegramの検出バッジも付く
+    (_holder_concentration_badge/_social_badges参照、絵文字は.envで
+    カスタム絵文字に差し替え可能)。
 
     スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
     DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
@@ -104,13 +130,21 @@ def _build_message(token: TrackedToken, score_total: int, tier: str) -> str:
     stars = _stars_display(token.unique_buyers_m5)
     if stars:
         score_line += f" {stars}"
+    holder_badge = _holder_concentration_badge(token.top10_holders_pct)
+    if holder_badge:
+        score_line += f" {holder_badge}"
     lines = [score_line]
 
     name = token.name.strip()
     symbol = token.symbol.strip()
+    social_badges = _social_badges(token)
     if name or symbol:
         label = f"{name} (${symbol})" if name and symbol else (name or f"${symbol}")
+        if social_badges:
+            label += f" {social_badges}"
         lines.append(label)
+    elif social_badges:
+        lines.append(social_badges)
 
     lines.append(f"`{token.mint}`")
     lines.append(_phantom_link(token.mint))

@@ -26,6 +26,8 @@ def _pair(**overrides) -> dict:
         "liquidity": {"usd": overrides.get("liquidity", 4000.0)},
         "marketCap": overrides.get("market_cap", 50000.0),
     }
+    if "socials" in overrides:
+        base["info"] = {"socials": overrides["socials"]}
     return base
 
 
@@ -124,6 +126,51 @@ def test_apply_rugcheck_report_records_warn_count():
     watcher.apply_rugcheck_report(token, None, "CreatorAddr1", warn_count=2)
 
     assert token.rugcheck_warn_count == 2
+
+
+def test_apply_rugcheck_report_records_top10_holders_pct():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_rugcheck_report(token, None, "CreatorAddr1", top10_holders_pct=42.5)
+
+    assert token.top10_holders_pct == 42.5
+
+
+def test_apply_rugcheck_report_defaults_top10_holders_pct_to_none():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_rugcheck_report(token, None, "CreatorAddr1")
+
+    assert token.top10_holders_pct is None
+
+
+def test_apply_snapshot_detects_twitter_and_telegram():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_snapshot(
+        token, _pair(socials=[{"type": "twitter", "url": "https://x.com/foo"}, {"type": "telegram", "url": "https://t.me/foo"}])
+    )
+
+    assert token.has_twitter is True
+    assert token.has_telegram is True
+
+
+def test_apply_snapshot_detects_x_type_as_twitter():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_snapshot(token, _pair(socials=[{"type": "x", "url": "https://x.com/foo"}]))
+
+    assert token.has_twitter is True
+    assert token.has_telegram is False
+
+
+def test_apply_snapshot_no_socials_leaves_flags_false():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_snapshot(token, _pair())
+
+    assert token.has_twitter is False
+    assert token.has_telegram is False
 
 
 def test_apply_rugcheck_report_marks_danger_when_reason_given():

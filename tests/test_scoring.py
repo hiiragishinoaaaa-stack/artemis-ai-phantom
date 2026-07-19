@@ -15,6 +15,8 @@ def _patch_config(monkeypatch):
     monkeypatch.setattr(config, "HIGH_SCORE_THRESHOLD", 75)
     monkeypatch.setattr(config, "WATCH_SCORE_THRESHOLD", 50)
     monkeypatch.setattr(config, "LOW_SCORE_THRESHOLD", 35)
+    monkeypatch.setattr(config, "HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT", 50.0)
+    monkeypatch.setattr(config, "HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT", 20.0)
 
 
 def _token(**overrides):
@@ -30,6 +32,7 @@ def _token(**overrides):
     token.rugcheck_danger = overrides.get("rugcheck_danger", False)
     token.rugcheck_danger_reason = overrides.get("rugcheck_danger_reason", "")
     token.rugcheck_warn_count = overrides.get("rugcheck_warn_count", 0)
+    token.top10_holders_pct = overrides.get("top10_holders_pct", None)
     token.blocked_creator_reason = overrides.get("blocked_creator_reason", "")
     return token
 
@@ -37,7 +40,7 @@ def _token(**overrides):
 def test_compute_score_all_zero_when_nothing_happened():
     result = scoring.compute_score(_token())
     assert result.total == 0
-    assert len(result.components) == 9
+    assert len(result.components) == 10
 
 
 @pytest.mark.parametrize(
@@ -154,6 +157,25 @@ def test_score_rugcheck_warnings_does_not_block_notification_even_with_max_warni
     )
     result = scoring.compute_score(token)
     assert result.total > 0  # dangerと違い、通知を止めるほどの強さにはしない
+
+
+def test_score_holder_concentration_unknown_gives_no_points():
+    assert scoring._score_holder_concentration(_token(top10_holders_pct=None)).points == 0
+
+
+def test_score_holder_concentration_warns_when_concentrated():
+    component = scoring._score_holder_concentration(_token(top10_holders_pct=50.0))
+    assert component.points == -10
+
+
+def test_score_holder_concentration_bonus_when_healthy():
+    component = scoring._score_holder_concentration(_token(top10_holders_pct=19.9))
+    assert component.points == 10
+
+
+def test_score_holder_concentration_neutral_in_between():
+    component = scoring._score_holder_concentration(_token(top10_holders_pct=35.0))
+    assert component.points == 0
 
 
 def test_compute_score_forces_zero_when_rugcheck_danger_detected_even_with_max_other_components():

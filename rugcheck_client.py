@@ -81,6 +81,30 @@ def extract_warn_count(report: dict) -> int:
     )
 
 
+def extract_top_holders_pct(report: dict, top_n: int = 10) -> float | None:
+    """レポートのtopHolders[](各要素は{"pct": 保有割合(%), ...})から、
+    上位top_n件のpctを合計して返す。データが無ければNoneを返す(=判定不能。
+    scoring.pyはこの場合加点・減点どちらもしない)。
+    """
+    top_holders = report.get("topHolders")
+    if not isinstance(top_holders, list) or not top_holders:
+        return None
+
+    percentages = []
+    for holder in top_holders:
+        if not isinstance(holder, dict):
+            continue
+        pct = holder.get("pct")
+        if isinstance(pct, (int, float)):
+            percentages.append(float(pct))
+
+    if not percentages:
+        return None
+
+    percentages.sort(reverse=True)
+    return sum(percentages[:top_n])
+
+
 def extract_creator(report: dict) -> str | None:
     """レポートから発行者(creator)のウォレットアドレスを返す。
 

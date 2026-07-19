@@ -12,6 +12,16 @@ import scoring
 from token_watcher import TokenWatcher
 
 
+@pytest.fixture(autouse=True)
+def _patch_config(monkeypatch):
+    monkeypatch.setattr(config, "HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT", 50.0)
+    monkeypatch.setattr(config, "HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT", 20.0)
+    monkeypatch.setattr(config, "DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI", "⚠️")
+    monkeypatch.setattr(config, "DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
+    monkeypatch.setattr(config, "DISCORD_TWITTER_EMOJI", "🐦")
+    monkeypatch.setattr(config, "DISCORD_TELEGRAM_EMOJI", "✈️")
+
+
 def _sent_content(mock_urlopen) -> str:
     """json.dumps(ensure_ascii=True)でエスケープされた本文を、元の文字列に戻す。"""
     request = mock_urlopen.call_args[0][0]
@@ -22,6 +32,9 @@ def _token(name: str = "Test Coin", symbol: str = "TEST", unique_buyers_m5: int 
     watcher = TokenWatcher()
     token = watcher.start_tracking(mint="MintAddr123", name=name, symbol=symbol, now=1000.0)
     token.unique_buyers_m5 = unique_buyers_m5
+    token.top10_holders_pct = overrides.get("top10_holders_pct")
+    token.has_twitter = overrides.get("has_twitter", False)
+    token.has_telegram = overrides.get("has_telegram", False)
     return token
 
 
@@ -207,3 +220,72 @@ def test_notify_shows_unique_buyer_stars(monkeypatch, unique_buyers_m5, expected
             assert score_line.endswith(f" {expected_stars}")
         else:
             assert "⭐" not in score_line
+
+
+def test_notify_shows_warn_badge_when_holders_concentrated(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(top10_holders_pct=60.0), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        score_line = content.splitlines()[0]
+        assert "⚠️" in score_line
+        assert "✅" not in score_line
+
+
+def test_notify_shows_healthy_badge_when_holders_distributed(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(top10_holders_pct=10.0), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        score_line = content.splitlines()[0]
+        assert "✅" in score_line
+        assert "⚠️" not in score_line
+
+
+def test_notify_shows_no_holder_badge_when_neutral_or_unknown(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(top10_holders_pct=35.0), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        score_line = content.splitlines()[0]
+        assert "⚠️" not in score_line
+        assert "✅" not in score_line
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(top10_holders_pct=None), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        score_line = content.splitlines()[0]
+        assert "⚠️" not in score_line
+        assert "✅" not in score_line
+
+
+def test_notify_shows_social_badges_next_to_name(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(
+            _token(name="Some Coin", symbol="SOME", has_twitter=True, has_telegram=True), _score(85), "WATCH", 60
+        )
+        content = _sent_content(mock_urlopen)
+        name_line = content.splitlines()[1]
+        assert "Some Coin ($SOME)" in name_line
+        assert "🐦" in name_line
+        assert "✈️" in name_line
+
+
+def test_notify_omits_social_badges_when_no_socials_detected(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(name="Some Coin", symbol="SOME"), _score(85), "WATCH", 60)
+        content = _sent_content(mock_urlopen)
+        assert "🐦" not in content
+        assert "✈️" not in content

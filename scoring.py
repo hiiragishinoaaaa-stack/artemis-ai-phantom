@@ -156,6 +156,36 @@ def _score_rugcheck_warnings(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("RugCheck注意フラグ", points, f"warn相当のリスク{count}件({points}点)")
 
 
+# 上位10保有者の合計保有率(%)がこの値以上なら集中しすぎ(⚠️)とみなし
+# 減点、この値未満なら健全に分散している(✅)とみなし加点する
+# (config.pyで調整可能)。RugCheckの"danger"レベルの極端な集中(例えば
+# 単一保有者が大半保有)は既にrugcheck_dangerで強制0点になるため、これは
+# それより緩やかな「気になる程度」の集中度への追加シグナル。
+_HOLDER_CONCENTRATION_WARN_PENALTY = -10
+_HOLDER_CONCENTRATION_HEALTHY_BONUS = 10
+
+
+def _score_holder_concentration(token: TrackedToken) -> ScoreComponent:
+    pct = token.top10_holders_pct
+    if pct is None:
+        return ScoreComponent("上位10保有者集中度", 0, "RugCheck未取得(判定なし)")
+    if pct >= config.HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT:
+        return ScoreComponent(
+            "上位10保有者集中度",
+            _HOLDER_CONCENTRATION_WARN_PENALTY,
+            f"上位10人で{pct:.1f}%保有({config.HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT:.0f}%以上: "
+            f"{_HOLDER_CONCENTRATION_WARN_PENALTY}点)",
+        )
+    if pct < config.HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT:
+        return ScoreComponent(
+            "上位10保有者集中度",
+            _HOLDER_CONCENTRATION_HEALTHY_BONUS,
+            f"上位10人で{pct:.1f}%保有({config.HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT:.0f}%未満: "
+            f"+{_HOLDER_CONCENTRATION_HEALTHY_BONUS})",
+        )
+    return ScoreComponent("上位10保有者集中度", 0, f"上位10人で{pct:.1f}%保有(中間: 加点なし)")
+
+
 # 過去に危険判定・大暴落があったトークンの発行者が、名前を変えて別の
 # トークンを再発行してきた場合、他の項目がどれだけ高くても通知させない
 # ための強いペナルティ(_RUGCHECK_DANGER_PENALTYと同じ考え方)。
@@ -184,6 +214,7 @@ _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
     _score_price_change_m5,
     _score_rugcheck_safety,
     _score_rugcheck_warnings,
+    _score_holder_concentration,
     _score_creator_blocklist,
 ]
 

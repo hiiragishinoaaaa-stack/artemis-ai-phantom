@@ -224,6 +224,9 @@ def _build_notification_row(
         "market_cap_usd": token.market_cap_usd,
         "rugcheck_danger": token.rugcheck_danger,
         "rugcheck_warn_count": token.rugcheck_warn_count,
+        "top10_holders_pct": token.top10_holders_pct,
+        "has_twitter": token.has_twitter,
+        "has_telegram": token.has_telegram,
         "creator": token.creator,
         "elapsed_seconds": elapsed_seconds,
     }
@@ -299,7 +302,8 @@ async def _checkpoint_loop(
                     danger_reason = rugcheck_client.extract_danger_reason(report)
                     creator = rugcheck_client.extract_creator(report)
                     warn_count = rugcheck_client.extract_warn_count(report)
-                    watcher.apply_rugcheck_report(token, danger_reason, creator, warn_count)
+                    top10_holders_pct = rugcheck_client.extract_top_holders_pct(report)
+                    watcher.apply_rugcheck_report(token, danger_reason, creator, warn_count, top10_holders_pct)
                     if danger_reason:
                         logger.info(
                             "main: RugCheckで危険フラグを検出しました mint=%s symbol=%s reason=%s",

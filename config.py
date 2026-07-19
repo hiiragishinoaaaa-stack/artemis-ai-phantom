@@ -117,6 +117,11 @@ MIN_VOLUME_USD_FOR_SCORE = _env_float("MIN_VOLUME_USD_FOR_SCORE", 300.0)
 # 流動性(USD建て)がこれ未満だと加点しない(極端に薄い=すぐ引き抜かれる
 # 可能性が高い)。
 MIN_LIQUIDITY_USD_FOR_SCORE = _env_float("MIN_LIQUIDITY_USD_FOR_SCORE", 2000.0)
+# RugCheckのtopHolders[]から計算した上位10保有者の合計保有率(%)がこれ
+# 以上なら集中しすぎ(⚠️)とみなし減点する。
+HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT = _env_float("HOLDER_CONCENTRATION_WARN_THRESHOLD_PCT", 50.0)
+# 上記の合計保有率がこれ未満なら健全に分散している(✅)とみなし加点する。
+HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT = _env_float("HOLDER_CONCENTRATION_HEALTHY_THRESHOLD_PCT", 20.0)
 
 # --- 通知レベルのスコア閾値 ---
 # score >= HIGH_SCORE_THRESHOLD: 🚨 HIGH(Discord通知)
@@ -166,6 +171,14 @@ DISCORD_FOLLOWUP_WEBHOOK_URL = os.getenv("DISCORD_FOLLOWUP_WEBHOOK_URL", "")
 # {mint})に付ける紹介コード(個人に紐づく値のため、コードに直書きせず
 # .envで設定する。未設定でもリンク自体は生成される)。
 PHANTOM_REFERRAL_ID = os.getenv("PHANTOM_REFERRAL_ID", "")
+
+# 通知本文の絵文字。Discordサーバーで作ったカスタム絵文字を使いたい場合、
+# `<:名前:ID>`の形式(Discordのメッセージ入力欄で`\:名前:`と打つと出てくる)
+# をそのまま値に設定すればよい(既定は標準の絵文字)。
+DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI = os.getenv("DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI", "⚠️")
+DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI = os.getenv("DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
+DISCORD_TWITTER_EMOJI = os.getenv("DISCORD_TWITTER_EMOJI", "🐦")
+DISCORD_TELEGRAM_EMOJI = os.getenv("DISCORD_TELEGRAM_EMOJI", "✈️")
 
 # --- Supabase(通知履歴・結果トラッキング・発行者ブラックリストの永続化、
 # ダッシュボードの分析用データソース。supabase_client.py参照) ---

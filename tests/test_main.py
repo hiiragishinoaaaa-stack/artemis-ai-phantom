@@ -89,6 +89,9 @@ def test_build_notification_row_includes_all_supabase_fields():
     token.market_cap_usd = 80000.0
     token.rugcheck_danger = False
     token.rugcheck_warn_count = 1
+    token.top10_holders_pct = 15.5
+    token.has_twitter = True
+    token.has_telegram = False
     token.creator = "CreatorAddr1"
 
     row = _build_notification_row(token, ScoreResult(total=90, components=[]), "HIGH", 60, "primary")
@@ -110,6 +113,9 @@ def test_build_notification_row_includes_all_supabase_fields():
         "market_cap_usd": 80000.0,
         "rugcheck_danger": False,
         "rugcheck_warn_count": 1,
+        "top10_holders_pct": 15.5,
+        "has_twitter": True,
+        "has_telegram": False,
         "creator": "CreatorAddr1",
         "elapsed_seconds": 60,
     }

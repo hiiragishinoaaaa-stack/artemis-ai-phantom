@@ -80,3 +80,35 @@ def test_extract_warn_count_counts_only_warn_level():
         ]
     }
     assert rugcheck_client.extract_warn_count(report) == 2
+
+
+def test_extract_top_holders_pct_returns_none_when_missing():
+    assert rugcheck_client.extract_top_holders_pct({}) is None
+    assert rugcheck_client.extract_top_holders_pct({"topHolders": []}) is None
+
+
+def test_extract_top_holders_pct_sums_top_n():
+    report = {
+        "topHolders": [
+            {"pct": 5.0, "owner": "A"},
+            {"pct": 3.0, "owner": "B"},
+            {"pct": 2.0, "owner": "C"},
+        ]
+    }
+    assert rugcheck_client.extract_top_holders_pct(report, top_n=2) == 8.0
+    assert rugcheck_client.extract_top_holders_pct(report, top_n=10) == 10.0
+
+
+def test_extract_top_holders_pct_sorts_before_summing():
+    report = {
+        "topHolders": [
+            {"pct": 1.0, "owner": "A"},
+            {"pct": 9.0, "owner": "B"},
+        ]
+    }
+    assert rugcheck_client.extract_top_holders_pct(report, top_n=1) == 9.0
+
+
+def test_extract_top_holders_pct_ignores_malformed_entries():
+    report = {"topHolders": [{"pct": 5.0}, "not a dict", {"owner": "no pct"}]}
+    assert rugcheck_client.extract_top_holders_pct(report) == 5.0
