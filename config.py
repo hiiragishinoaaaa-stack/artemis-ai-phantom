@@ -179,6 +179,13 @@ DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI = os.getenv("DISCORD_HOLDER_CONCENTRATIO
 DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI = os.getenv("DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
 DISCORD_TWITTER_EMOJI = os.getenv("DISCORD_TWITTER_EMOJI", "🐦")
 DISCORD_TELEGRAM_EMOJI = os.getenv("DISCORD_TELEGRAM_EMOJI", "✈️")
+DISCORD_HIGH_TIER_EMOJI = os.getenv("DISCORD_HIGH_TIER_EMOJI", "🚨")
+DISCORD_WATCH_TIER_EMOJI = os.getenv("DISCORD_WATCH_TIER_EMOJI", "⚠")
+
+# ダッシュボードの公開URL(例: http://76.13.180.239:8790)。設定すると、
+# 通知の「詳細」ボタンがこのURLの/token/{mint}へのリンクになる
+# (dashboard_server.py参照)。未設定なら「詳細」ボタンは付けない。
+DASHBOARD_PUBLIC_URL = os.getenv("DASHBOARD_PUBLIC_URL", "")
 
 # --- Supabase(通知履歴・結果トラッキング・発行者ブラックリストの永続化、
 # ダッシュボードの分析用データソース。supabase_client.py参照) ---

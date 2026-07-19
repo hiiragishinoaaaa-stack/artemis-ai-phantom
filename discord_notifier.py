@@ -28,17 +28,30 @@ _REQUEST_TIMEOUT_SECONDS = 5
 # 一般的なブラウザのUser-Agentを明示的に指定する。
 _USER_AGENT = "Mozilla/5.0 (compatible; ARTEMIS-Phantom-Sniper/1.0)"
 
-_TIER_EMOJI = {
-    "HIGH": "🚨",
-    "WATCH": "⚠",
-}
+# Discordのメッセージコンポーネント(ボタン)の定数。Link(URL)スタイルの
+# ボタンはBot側のインタラクション応答が不要なため、Webhookからの送信だけで
+# 完結する(_build_components参照)。
+_COMPONENT_TYPE_ACTION_ROW = 1
+_COMPONENT_TYPE_BUTTON = 2
+_BUTTON_STYLE_LINK = 5
 
 
-def _send(content: str, webhook_url: str) -> None:
+def _tier_emoji(tier: str) -> str:
+    if tier == "HIGH":
+        return config.DISCORD_HIGH_TIER_EMOJI
+    if tier == "WATCH":
+        return config.DISCORD_WATCH_TIER_EMOJI
+    return tier
+
+
+def _send(content: str, webhook_url: str, components: list[dict] | None = None) -> None:
     if not config.DISCORD_ENABLED or not webhook_url:
         return
 
-    body = json.dumps({"content": content}).encode("utf-8")
+    payload: dict = {"content": content}
+    if components:
+        payload["components"] = components
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         webhook_url,
         data=body,
@@ -99,13 +112,14 @@ def notify_score_update(
 ) -> None:
     """スコアが通知ライン(WATCH以上)を超えた/更新された瞬間に呼び出す。
 
-    コピペ・タップだけで済むことを想定し、内容はスコア・銘柄名・mint
-    アドレス・Phantomで開くリンクのみの最小限にしている(2026-07、
+    本文はスコア・銘柄名・mintアドレスのみの最小限にしている(2026-07、
     ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
     ログ側に残る)。スコア行の末尾には★(ユニーク買い手)と上位10保有者
     集中度の⚠️/✅バッジ、名前行の末尾にはX/Telegramの検出バッジも付く
     (_holder_concentration_badge/_social_badges参照、絵文字は.envで
-    カスタム絵文字に差し替え可能)。
+    カスタム絵文字に差し替え可能)。「詳細」(ダッシュボードの/token/{mint}、
+    DASHBOARD_PUBLIC_URL未設定なら付かない)・「Phantomで開く」のリンク
+    ボタンをメッセージに添付する(_build_components参照)。
 
     スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
     DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
@@ -118,14 +132,15 @@ def notify_score_update(
     `notify_star_upgrade()`が別途追い通知する(main.py参照)。
     """
     content = _build_message(token, score.total, tier)
+    components = _build_components(token)
 
-    _send(content, config.DISCORD_WEBHOOK_URL)
+    _send(content, config.DISCORD_WEBHOOK_URL, components=components)
     if score.total >= 100 and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
-        _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL)
+        _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL, components=components)
 
 
 def _build_message(token: TrackedToken, score_total: int, tier: str) -> str:
-    emoji = _TIER_EMOJI.get(tier, tier)
+    emoji = _tier_emoji(tier)
     score_line = f"{emoji} {tier} Score: {score_total}/100"
     stars = _stars_display(token.unique_buyers_m5)
     if stars:
@@ -147,8 +162,36 @@ def _build_message(token: TrackedToken, score_total: int, tier: str) -> str:
         lines.append(social_badges)
 
     lines.append(f"`{token.mint}`")
-    lines.append(_phantom_link(token.mint))
     return "\n".join(lines)
+
+
+def _build_components(token: TrackedToken) -> list[dict]:
+    """通知メッセージに添えるボタン行を組み立てる(Link(URL)スタイルのみ。
+    Bot側のインタラクション応答が不要なため、Webhookからの送信だけで完結する)。
+
+    DASHBOARD_PUBLIC_URLが設定されていれば「詳細」ボタン(ダッシュボードの
+    /token/{mint}へ)を先頭に、「Phantomで開く」ボタンは常に付ける。
+    """
+    buttons = []
+    if config.DASHBOARD_PUBLIC_URL:
+        detail_url = f"{config.DASHBOARD_PUBLIC_URL.rstrip('/')}/token/{token.mint}"
+        buttons.append(
+            {
+                "type": _COMPONENT_TYPE_BUTTON,
+                "style": _BUTTON_STYLE_LINK,
+                "label": "詳細",
+                "url": detail_url,
+            }
+        )
+    buttons.append(
+        {
+            "type": _COMPONENT_TYPE_BUTTON,
+            "style": _BUTTON_STYLE_LINK,
+            "label": "Phantomで開く",
+            "url": _phantom_link(token.mint),
+        }
+    )
+    return [{"type": _COMPONENT_TYPE_ACTION_ROW, "components": buttons}]
 
 
 def notify_star_upgrade(
@@ -169,4 +212,4 @@ def notify_star_upgrade(
         return
     stars = _stars_display(token.unique_buyers_m5)
     content = f"🔥 ユニーク買い手{stars}を確認\n" + _build_message(token, score.total, tier)
-    _send(content, config.DISCORD_FOLLOWUP_WEBHOOK_URL)
+    _send(content, config.DISCORD_FOLLOWUP_WEBHOOK_URL, components=_build_components(token))

@@ -20,12 +20,25 @@ def _patch_config(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
     monkeypatch.setattr(config, "DISCORD_TWITTER_EMOJI", "🐦")
     monkeypatch.setattr(config, "DISCORD_TELEGRAM_EMOJI", "✈️")
+    monkeypatch.setattr(config, "DISCORD_HIGH_TIER_EMOJI", "🚨")
+    monkeypatch.setattr(config, "DISCORD_WATCH_TIER_EMOJI", "⚠")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "")
 
 
 def _sent_content(mock_urlopen) -> str:
     """json.dumps(ensure_ascii=True)でエスケープされた本文を、元の文字列に戻す。"""
     request = mock_urlopen.call_args[0][0]
     return json.loads(request.data.decode("utf-8"))["content"]
+
+
+def _sent_payload(mock_urlopen) -> dict:
+    request = mock_urlopen.call_args[0][0]
+    return json.loads(request.data.decode("utf-8"))
+
+
+def _button_urls(payload: dict) -> list[str]:
+    buttons = payload.get("components", [{}])[0].get("components", [])
+    return [b["url"] for b in buttons]
 
 
 def _token(name: str = "Test Coin", symbol: str = "TEST", unique_buyers_m5: int = 0, **overrides):
@@ -74,27 +87,55 @@ def test_notify_sends_minimal_message_with_score_and_mint(monkeypatch):
         assert "WATCH" in content
 
 
-def test_notify_includes_phantom_link_without_referral_id(monkeypatch):
+def test_notify_button_links_to_phantom_without_referral_id(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
     monkeypatch.setattr(config, "PHANTOM_REFERRAL_ID", "")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
-        content = _sent_content(mock_urlopen)
-        assert "https://phantom.com/tokens/solana/MintAddr123" in content
-        assert "referralId" not in content
+        urls = _button_urls(_sent_payload(mock_urlopen))
+        assert "https://phantom.com/tokens/solana/MintAddr123" in urls
+        assert not any("referralId" in u for u in urls)
 
 
-def test_notify_includes_phantom_link_with_referral_id(monkeypatch):
+def test_notify_button_links_to_phantom_with_referral_id(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
     monkeypatch.setattr(config, "PHANTOM_REFERRAL_ID", "it5dy15sgab")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
-        content = _sent_content(mock_urlopen)
-        assert "https://phantom.com/tokens/solana/MintAddr123?referralId=it5dy15sgab" in content
+        urls = _button_urls(_sent_payload(mock_urlopen))
+        assert "https://phantom.com/tokens/solana/MintAddr123?referralId=it5dy15sgab" in urls
+
+
+def test_notify_omits_detail_button_when_dashboard_url_unset(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
+        payload = _sent_payload(mock_urlopen)
+        buttons = payload["components"][0]["components"]
+        assert len(buttons) == 1
+        assert buttons[0]["label"] == "Phantomで開く"
+
+
+def test_notify_includes_detail_button_when_dashboard_url_set(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "http://76.13.180.239:8790")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
+        payload = _sent_payload(mock_urlopen)
+        buttons = payload["components"][0]["components"]
+        assert len(buttons) == 2
+        assert buttons[0]["label"] == "詳細"
+        assert buttons[0]["url"] == "http://76.13.180.239:8790/token/MintAddr123"
+        assert buttons[1]["label"] == "Phantomで開く"
 
 
 def test_notify_includes_name_and_symbol_when_present(monkeypatch):
@@ -114,7 +155,7 @@ def test_notify_omits_name_line_when_both_empty(monkeypatch):
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(name="", symbol=""), _score(80), "HIGH", 60)
         content = _sent_content(mock_urlopen)
-        assert content.count("\n") == 2  # スコア行・mint行・Phantomリンク行の3行のみ
+        assert content.count("\n") == 1  # スコア行・mint行の2行のみ
 
 
 def test_notify_high_tier_uses_high_emoji(monkeypatch):
@@ -126,6 +167,19 @@ def test_notify_high_tier_uses_high_emoji(monkeypatch):
         content = _sent_content(mock_urlopen)
         assert "🚨" in content
         assert "HIGH" in content
+
+
+def test_notify_uses_custom_discord_emoji_from_config(monkeypatch):
+    """DISCORD_HIGH_TIER_EMOJI/DISCORD_WATCH_TIER_EMOJIをDiscordのカスタム
+    絵文字記法(<:name:id>)に差し替えても、そのままメッセージに使われること。"""
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DISCORD_HIGH_TIER_EMOJI", "<:danger:123456789012345678>")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(), _score(95), "HIGH", 20)
+        content = _sent_content(mock_urlopen)
+        assert content.startswith("<:danger:123456789012345678> HIGH Score: 95/100")
 
 
 def test_notify_failure_does_not_raise(monkeypatch):
