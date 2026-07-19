@@ -36,14 +36,6 @@ _COMPONENT_TYPE_BUTTON = 2
 _BUTTON_STYLE_LINK = 5
 
 
-def _tier_emoji(tier: str) -> str:
-    if tier == "HIGH":
-        return config.DISCORD_HIGH_TIER_EMOJI
-    if tier == "WATCH":
-        return config.DISCORD_WATCH_TIER_EMOJI
-    return tier
-
-
 def _send(content: str, webhook_url: str, components: list[dict] | None = None) -> None:
     if not config.DISCORD_ENABLED or not webhook_url:
         return
@@ -112,26 +104,27 @@ def notify_score_update(
 ) -> None:
     """スコアが通知ライン(WATCH以上)を超えた/更新された瞬間に呼び出す。
 
-    本文はスコア・銘柄名・mintアドレスのみの最小限にしている(2026-07、
-    ユーザー希望により出来高等の長文詳細・注意書きは削除。詳細はDEBUG
-    ログ側に残る)。スコア行の末尾には★(ユニーク買い手)と上位10保有者
-    集中度の⚠️/✅バッジ、名前行の末尾にはX/Telegramの検出バッジも付く
-    (_holder_concentration_badge/_social_badges参照、絵文字は.envで
-    カスタム絵文字に差し替え可能)。「詳細」(ダッシュボードの/token/{mint}、
-    DASHBOARD_PUBLIC_URL未設定なら付かない)・「Phantomで開く」のリンク
-    ボタンをメッセージに添付する(_build_components参照)。
+    本文はスコア・銘柄名のみの最小限にしている(2026-07、ユーザー希望に
+    より出来高・mintアドレス等の詳細は削除。mintアドレスは「詳細」ボタンの
+    遷移先ページに表示される。詳細はDEBUGログ側にも残る)。スコア行は
+    「★(ユニーク買い手) スコア/100 ⚠️/✅(上位10保有者集中度)」の順、
+    名前行の末尾にはX/Telegramの検出バッジも付く(_holder_concentration_
+    badge/_social_badges参照、絵文字は.envでカスタム絵文字に差し替え
+    可能)。「詳細」(ダッシュボードの/token/{mint}、DASHBOARD_PUBLIC_URL
+    未設定なら付かない)・「Phantomで開く」のリンクボタンをメッセージに
+    添付する(_build_components参照)。
 
     スコアが100点満点の場合、通常のDISCORD_WEBHOOK_URLに加えて
     DISCORD_PERFECT_SCORE_WEBHOOK_URL(満点専用チャンネル)にも同じ内容を
     送る(未設定なら送らない。★の数は問わない)。
 
-    スコア行の末尾に、直近5分のユニーク買い手数を★0〜3個で表示する
+    スコア行の先頭に、直近5分のユニーク買い手数を★0〜3個で表示する
     (少数のウォレットの自作自演ではなく、実際に多くの人が買っている
     ことをスコアの内訳を見なくても一目でわかるようにするため)。この
     時点で★0でも、後のチェックポイントで★1つ以上に育ったら
     `notify_star_upgrade()`が別途追い通知する(main.py参照)。
     """
-    content = _build_message(token, score.total, tier)
+    content = _build_message(token, score.total)
     components = _build_components(token)
 
     _send(content, config.DISCORD_WEBHOOK_URL, components=components)
@@ -139,16 +132,16 @@ def notify_score_update(
         _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL, components=components)
 
 
-def _build_message(token: TrackedToken, score_total: int, tier: str) -> str:
-    emoji = _tier_emoji(tier)
-    score_line = f"{emoji} {tier} Score: {score_total}/100"
+def _build_message(token: TrackedToken, score_total: int) -> str:
+    score_line_parts = []
     stars = _stars_display(token.unique_buyers_m5)
     if stars:
-        score_line += f" {stars}"
+        score_line_parts.append(stars)
+    score_line_parts.append(f"{score_total}/100")
     holder_badge = _holder_concentration_badge(token.top10_holders_pct)
     if holder_badge:
-        score_line += f" {holder_badge}"
-    lines = [score_line]
+        score_line_parts.append(holder_badge)
+    lines = [" ".join(score_line_parts)]
 
     name = token.name.strip()
     symbol = token.symbol.strip()
@@ -161,7 +154,6 @@ def _build_message(token: TrackedToken, score_total: int, tier: str) -> str:
     elif social_badges:
         lines.append(social_badges)
 
-    lines.append(f"`{token.mint}`")
     return "\n".join(lines)
 
 
@@ -211,5 +203,5 @@ def notify_star_upgrade(
     if not config.DISCORD_FOLLOWUP_WEBHOOK_URL:
         return
     stars = _stars_display(token.unique_buyers_m5)
-    content = f"🔥 ユニーク買い手{stars}を確認\n" + _build_message(token, score.total, tier)
+    content = f"🔥 ユニーク買い手{stars}を確認\n" + _build_message(token, score.total)
     _send(content, config.DISCORD_FOLLOWUP_WEBHOOK_URL, components=_build_components(token))

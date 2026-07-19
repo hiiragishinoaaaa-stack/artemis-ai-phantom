@@ -20,8 +20,6 @@ def _patch_config(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
     monkeypatch.setattr(config, "DISCORD_TWITTER_EMOJI", "🐦")
     monkeypatch.setattr(config, "DISCORD_TELEGRAM_EMOJI", "✈️")
-    monkeypatch.setattr(config, "DISCORD_HIGH_TIER_EMOJI", "🚨")
-    monkeypatch.setattr(config, "DISCORD_WATCH_TIER_EMOJI", "⚠")
     monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "")
 
 
@@ -73,7 +71,9 @@ def test_notify_does_nothing_when_webhook_url_missing(monkeypatch):
         mock_urlopen.assert_not_called()
 
 
-def test_notify_sends_minimal_message_with_score_and_mint(monkeypatch):
+def test_notify_sends_minimal_message_with_score(monkeypatch):
+    """本文にはスコアのみ(mintアドレスやtier名の文字列は含めない、
+    mintアドレスはボタンのURL側にのみ含まれる)。"""
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
     monkeypatch.setattr(config, "PHANTOM_REFERRAL_ID", "")
@@ -82,9 +82,9 @@ def test_notify_sends_minimal_message_with_score_and_mint(monkeypatch):
         discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
         mock_urlopen.assert_called_once()
         content = _sent_content(mock_urlopen)
-        assert "MintAddr123" in content
         assert "85/100" in content
-        assert "WATCH" in content
+        assert "MintAddr123" not in content
+        assert "WATCH" not in content
 
 
 def test_notify_button_links_to_phantom_without_referral_id(monkeypatch):
@@ -155,31 +155,20 @@ def test_notify_omits_name_line_when_both_empty(monkeypatch):
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(name="", symbol=""), _score(80), "HIGH", 60)
         content = _sent_content(mock_urlopen)
-        assert content.count("\n") == 1  # スコア行・mint行の2行のみ
+        assert content.count("\n") == 0  # スコア行のみ
 
 
-def test_notify_high_tier_uses_high_emoji(monkeypatch):
+def test_notify_uses_custom_discord_emoji_for_holder_badge(monkeypatch):
+    """DISCORD_HOLDER_CONCENTRATION_*_EMOJIをDiscordのカスタム絵文字記法
+    (<:name:id>)に差し替えても、そのままメッセージに使われること。"""
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "<:safe:123456789012345678>")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
-        discord_notifier.notify_score_update(_token(), _score(95), "HIGH", 20)
+        discord_notifier.notify_score_update(_token(top10_holders_pct=10.0), _score(95), "HIGH", 20)
         content = _sent_content(mock_urlopen)
-        assert "🚨" in content
-        assert "HIGH" in content
-
-
-def test_notify_uses_custom_discord_emoji_from_config(monkeypatch):
-    """DISCORD_HIGH_TIER_EMOJI/DISCORD_WATCH_TIER_EMOJIをDiscordのカスタム
-    絵文字記法(<:name:id>)に差し替えても、そのままメッセージに使われること。"""
-    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
-    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
-    monkeypatch.setattr(config, "DISCORD_HIGH_TIER_EMOJI", "<:danger:123456789012345678>")
-
-    with patch("urllib.request.urlopen") as mock_urlopen:
-        discord_notifier.notify_score_update(_token(), _score(95), "HIGH", 20)
-        content = _sent_content(mock_urlopen)
-        assert content.startswith("<:danger:123456789012345678> HIGH Score: 95/100")
+        assert "<:safe:123456789012345678>" in content.splitlines()[0]
 
 
 def test_notify_failure_does_not_raise(monkeypatch):
@@ -243,8 +232,9 @@ def test_notify_star_upgrade_sends_to_followup_webhook_only(monkeypatch):
         assert mock_urlopen.call_args[0][0].full_url == "https://discord.com/api/webhooks/followup"
         content = _sent_content(mock_urlopen)
         assert "⭐⭐⭐" in content
-        assert "MintAddr123" in content
         assert "90/100" in content
+        urls = _button_urls(_sent_payload(mock_urlopen))
+        assert "https://phantom.com/tokens/solana/MintAddr123" in urls
 
 
 def test_notify_star_upgrade_fires_with_just_one_star(monkeypatch):
@@ -271,9 +261,23 @@ def test_notify_shows_unique_buyer_stars(monkeypatch, unique_buyers_m5, expected
         content = _sent_content(mock_urlopen)
         score_line = content.splitlines()[0]
         if expected_stars:
-            assert score_line.endswith(f" {expected_stars}")
+            assert score_line.startswith(f"{expected_stars} ")
         else:
             assert "⭐" not in score_line
+            assert score_line.startswith("85/100")
+
+
+def test_notify_score_line_order_is_stars_then_score_then_holder_badge(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(
+            _token(unique_buyers_m5=10, top10_holders_pct=10.0), _score(92), "HIGH", 60
+        )
+        content = _sent_content(mock_urlopen)
+        score_line = content.splitlines()[0]
+        assert score_line == "⭐⭐⭐ 92/100 ✅"
 
 
 def test_notify_shows_warn_badge_when_holders_concentrated(monkeypatch):
