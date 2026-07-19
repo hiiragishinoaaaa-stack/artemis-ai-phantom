@@ -21,7 +21,6 @@ def _pair(**overrides) -> dict:
     base = {
         "url": "https://dexscreener.com/solana/MINT1",
         "txns": {"m5": {"buys": overrides.get("buys", 3), "sells": overrides.get("sells", 1)}},
-        "buyers": {"m5": overrides.get("unique_buyers", 2)},
         "volume": {"m5": overrides.get("volume", 123.0)},
         "priceChange": {"m5": overrides.get("price_change", 15.0)},
         "liquidity": {"usd": overrides.get("liquidity", 4000.0)},
@@ -58,13 +57,12 @@ def test_apply_snapshot_populates_fields_from_pair():
     token = _start(watcher)
     watcher.apply_snapshot(
         token,
-        _pair(buys=7, sells=2, unique_buyers=6, volume=555.0, price_change=25.0, liquidity=9000.0, market_cap=80000.0),
+        _pair(buys=7, sells=2, volume=555.0, price_change=25.0, liquidity=9000.0, market_cap=80000.0),
     )
 
     assert token.has_pair_data is True
     assert token.buys_m5 == 7
     assert token.sells_m5 == 2
-    assert token.unique_buyers_m5 == 6
     assert token.volume_m5_usd == 555.0
     assert token.price_change_m5_pct == 25.0
     assert token.liquidity_usd == 9000.0
@@ -80,9 +78,32 @@ def test_apply_snapshot_handles_missing_nested_fields():
     assert token.has_pair_data is True
     assert token.buys_m5 == 0
     assert token.sells_m5 == 0
-    assert token.unique_buyers_m5 == 0
     assert token.volume_m5_usd == 0.0
     assert token.liquidity_usd == 0.0
+
+
+def test_apply_snapshot_does_not_touch_unique_buyers_m5():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    token.unique_buyers_m5 = 7
+    watcher.apply_snapshot(token, _pair())
+
+    assert token.unique_buyers_m5 == 7  # apply_unique_buyers()の担当、ここでは変わらない
+
+
+def test_apply_unique_buyers_sets_value():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_unique_buyers(token, 5)
+    assert token.unique_buyers_m5 == 5
+
+
+def test_apply_unique_buyers_keeps_previous_value_when_none():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_unique_buyers(token, 5)
+    watcher.apply_unique_buyers(token, None)  # 取得失敗、前回値を維持
+    assert token.unique_buyers_m5 == 5
 
 
 def test_apply_rugcheck_report_marks_safe_when_no_danger_reason():

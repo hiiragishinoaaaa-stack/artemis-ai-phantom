@@ -79,6 +79,25 @@ DEXSCREENER_API_BASE_URL = os.getenv("DEXSCREENER_API_BASE_URL", "https://api.de
 # TrackedToken.rugcheck_checkedへキャッシュして使い回す(main.py参照)。
 RUGCHECK_API_BASE_URL = os.getenv("RUGCHECK_API_BASE_URL", "https://api.rugcheck.xyz")
 
+# --- Solana RPC接続(solana_client.py) ---
+# ユニーク買い手数(★表示)を、DexScreenerではなくSolanaブロックチェーンから
+# 直接取引を読んで自前で集計するために使う(2026-07、DexScreenerの公開API
+# にはそもそもこのデータが無いことが判明したため、オンチェーンで数える方式に
+# 変更した)。既定は無料の公開エンドポイントだが、レート制限が厳しいため、
+# 安定運用したい場合はHelius(https://www.helius.dev/、無料枠あり・
+# クレジットカード不要)等でAPIキー付きのURLを取得して設定することを推奨する
+# (README.mdの「Solana RPC連携」参照)。
+SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+# 1回のユニーク買い手数集計につき取得する取引署名の上限(RPC呼び出し回数を
+# 抑えるための上限。これを超える分は集計対象外になる=取りこぼす場合がある)。
+SOLANA_MAX_SIGNATURES_PER_CHECKPOINT = _env_int("SOLANA_MAX_SIGNATURES_PER_CHECKPOINT", 20)
+# getTransactionの同時並列リクエスト数(初動の通知速度に影響しないよう、
+# チェックポイント処理を遅らせすぎない範囲で並列化する)。
+SOLANA_RPC_CONCURRENCY = _env_int("SOLANA_RPC_CONCURRENCY", 5)
+# ユニーク買い手数を集計する時間幅(秒)。DexScreenerの「直近5分」指標
+# (buys_m5等)と揃えるため既定300秒(5分)。
+SOLANA_UNIQUE_BUYERS_WINDOW_SECONDS = _env_int("SOLANA_UNIQUE_BUYERS_WINDOW_SECONDS", 300)
+
 # --- 卒業後の観察・スコアリング(token_watcher.py / scoring.py) ---
 # 「条件を全部満たさなければ即破棄」ではなく、100点満点のスコア方式で
 # 評価する。DEX卒業(migration)を検知してから、以下の秒数(migrated_atから

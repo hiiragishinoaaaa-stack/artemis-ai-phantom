@@ -36,6 +36,7 @@ import dexscreener_client
 import discord_notifier
 import rugcheck_client
 import scoring
+import solana_client
 import supabase_client
 from creator_blocklist import CreatorBlocklist
 from logger import setup_logger
@@ -274,6 +275,20 @@ async def _checkpoint_loop(
             pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, token.mint)
             if pair is not None:
                 watcher.apply_snapshot(token, pair)
+
+            if elapsed > 0 and pair is not None:
+                # ユニーク買い手数はSolanaのオンチェーンデータから集計する
+                # (DexScreenerには無い。solana_client.py参照)。0秒チェック
+                # ポイント(卒業直後)では行わない。取引の署名取得+複数の
+                # getTransaction呼び出しが必要で数秒かかることがあり、初動の
+                # 通知速度を落としたくないため(★の情報は後の追い通知で
+                # 補う設計。discord_notifier.notify_star_upgrade参照)。
+                pool_address = pair.get("pairAddress")
+                since_unix = now - config.SOLANA_UNIQUE_BUYERS_WINDOW_SECONDS
+                unique_buyers = await asyncio.to_thread(
+                    solana_client.count_unique_buyers, pool_address, token.mint, since_unix
+                )
+                watcher.apply_unique_buyers(token, unique_buyers)
 
             if not token.rugcheck_checked:
                 # トークン1件につき1回だけ取得する(レート制限がDexScreener

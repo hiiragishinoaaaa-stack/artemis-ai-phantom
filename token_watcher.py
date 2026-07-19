@@ -34,7 +34,8 @@ class TrackedToken:
     has_pair_data: bool = False
     buys_m5: int = 0
     sells_m5: int = 0
-    # 直近5分のユニークな買い手数(DexScreenerのbuyersフィールド)。
+    # 直近5分のユニークな買い手数(solana_client.pyがSolanaのオンチェーン
+    # データから直接集計する。DexScreenerにはこのデータが無いため)。
     # 少数のウォレットが自作自演で買い増して見かけの活気を演出する
     # ボット/ウォッシュトレード対策として、買い件数とは別に見る。
     unique_buyers_m5: int = 0
@@ -106,11 +107,16 @@ class TokenWatcher:
         return token
 
     def apply_snapshot(self, token: TrackedToken, pair: dict) -> None:
-        """dexscreener_client.fetch_best_pair()が返したペア情報をtokenへ反映する。"""
+        """dexscreener_client.fetch_best_pair()が返したペア情報をtokenへ反映する。
+
+        ユニーク買い手数(unique_buyers_m5)はここでは設定しない。DexScreener
+        の公開APIにはそもそもそのデータが無いため(2026-07判明)、
+        solana_client.py経由でオンチェーンから別途取得する
+        (apply_unique_buyers参照、main.py参照)。
+        """
         txns_m5 = (pair.get("txns") or {}).get("m5") or {}
         token.buys_m5 = int(txns_m5.get("buys") or 0)
         token.sells_m5 = int(txns_m5.get("sells") or 0)
-        token.unique_buyers_m5 = int((pair.get("buyers") or {}).get("m5") or 0)
         token.volume_m5_usd = float((pair.get("volume") or {}).get("m5") or 0.0)
         token.price_change_m5_pct = float((pair.get("priceChange") or {}).get("m5") or 0.0)
         token.liquidity_usd = float((pair.get("liquidity") or {}).get("usd") or 0.0)
@@ -119,6 +125,16 @@ class TokenWatcher:
         if url:
             token.dexscreener_url = str(url)
         token.has_pair_data = True
+
+    def apply_unique_buyers(self, token: TrackedToken, count: int | None) -> None:
+        """solana_client.count_unique_buyers()の結果をtokenへ反映する。
+
+        countがNoneの場合(RPC取得に失敗した場合)は何もしない
+        (前回取得できた値をそのまま維持する。一時的な通信失敗のたびに
+        ★表示が0へ逆戻りするのを防ぐため)。
+        """
+        if count is not None:
+            token.unique_buyers_m5 = count
 
     def apply_rugcheck_report(
         self,
