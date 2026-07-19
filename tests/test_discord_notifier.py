@@ -110,6 +110,19 @@ def test_notify_button_links_to_phantom_with_referral_id(monkeypatch):
         assert "https://phantom.com/tokens/solana/MintAddr123?referralId=it5dy15sgab" in urls
 
 
+def test_notify_appends_with_components_query_param_when_sending_buttons(monkeypatch):
+    """通常のWebhook(application-owned webhookでないもの)はwith_components=true
+    が無いとcomponentsを黙って無視するため、ボタン送信時は必ず付与する
+    (エラーにはならずボタンだけ付かずに届く、という気付きにくい不具合の再発防止)。"""
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(), _score(85), "WATCH", 60)
+        request = mock_urlopen.call_args[0][0]
+        assert request.full_url == "https://discord.com/api/webhooks/x?with_components=true"
+
+
 def test_notify_omits_detail_button_when_dashboard_url_unset(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
     monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
@@ -187,7 +200,7 @@ def test_notify_sends_only_to_main_webhook_when_score_below_100(monkeypatch):
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_score_update(_token(), _score(99), "HIGH", 60)
         mock_urlopen.assert_called_once()
-        assert mock_urlopen.call_args[0][0].full_url == "https://discord.com/api/webhooks/main"
+        assert mock_urlopen.call_args[0][0].full_url.startswith("https://discord.com/api/webhooks/main")
 
 
 def test_notify_sends_to_both_webhooks_when_score_is_100_regardless_of_stars(monkeypatch):
@@ -199,7 +212,10 @@ def test_notify_sends_to_both_webhooks_when_score_is_100_regardless_of_stars(mon
         discord_notifier.notify_score_update(_token(unique_buyers_m5=0), _score(100), "HIGH", 60)
         assert mock_urlopen.call_count == 2
         urls = {call.args[0].full_url for call in mock_urlopen.call_args_list}
-        assert urls == {"https://discord.com/api/webhooks/main", "https://discord.com/api/webhooks/perfect"}
+        assert urls == {
+            "https://discord.com/api/webhooks/main?with_components=true",
+            "https://discord.com/api/webhooks/perfect?with_components=true",
+        }
 
 
 def test_notify_score_100_does_not_send_to_perfect_channel_when_unset(monkeypatch):
@@ -229,7 +245,7 @@ def test_notify_star_upgrade_sends_to_followup_webhook_only(monkeypatch):
     with patch("urllib.request.urlopen") as mock_urlopen:
         discord_notifier.notify_star_upgrade(_token(unique_buyers_m5=10), _score(90), "HIGH", 300)
         mock_urlopen.assert_called_once()
-        assert mock_urlopen.call_args[0][0].full_url == "https://discord.com/api/webhooks/followup"
+        assert mock_urlopen.call_args[0][0].full_url.startswith("https://discord.com/api/webhooks/followup")
         content = _sent_content(mock_urlopen)
         assert "⭐⭐⭐" in content
         assert "90/100" in content

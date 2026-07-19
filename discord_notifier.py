@@ -41,11 +41,17 @@ def _send(content: str, webhook_url: str, components: list[dict] | None = None) 
         return
 
     payload: dict = {"content": content}
+    request_url = webhook_url
     if components:
         payload["components"] = components
+        # サーバー設定から作る通常のWebhook(application-owned webhookでないもの)は、
+        # with_components=trueクエリパラメータを付けないとcomponentsを黙って無視する
+        # (エラーにはならずボタンだけ付かずに届く、という気付きにくい仕様)。
+        separator = "&" if "?" in webhook_url else "?"
+        request_url = f"{webhook_url}{separator}with_components=true"
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        webhook_url,
+        request_url,
         data=body,
         headers={"Content-Type": "application/json", "User-Agent": _USER_AGENT},
         method="POST",
