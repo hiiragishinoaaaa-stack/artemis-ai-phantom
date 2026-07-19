@@ -381,6 +381,17 @@ sudo systemctl restart phantom-sniper
 journalctl -u phantom-sniper -f
 ```
 
+`git pull`のたびに`.env.example`へ新しい設定項目が増えていることがある
+(既定値が使われるだけなので気付きにくい)。以下で、`.env.example`には
+あるのに自分の`.env`には無いキーだけを一覧できる:
+
+```
+comm -23 <(grep -oE '^[A-Z_]+=' .env.example | sort -u) <(grep -oE '^[A-Z_]+=' .env | sort -u)
+```
+
+何か出てきたら、`.env.example`の該当行を見てから自分の`.env`にも追記する
+(値を秘密にする必要が無いものは既定値のままコピーでよい)。
+
 ## テスト
 
 ネットワーク不要な部分(`token_watcher.py`のチェックポイント管理、
