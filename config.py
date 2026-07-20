@@ -110,6 +110,15 @@ MIGRATION_CHECKPOINTS_SECONDS: tuple[int, ...] = (0, 60, 300, 900)
 # 同時に観察できるトークン数の上限(メモリの暴走防止)。
 # これを超えた場合、最も古い(卒業が古い)ものから観察を打ち切る。
 MAX_TRACKED_TOKENS = _env_int("MAX_TRACKED_TOKENS", 500)
+# 1回のポーリングでチェックポイントを迎えたトークンを、同時に何件まで
+# 並行処理するか(main.py:_checkpoint_loop)。1件ずつ順番に処理する設計
+# だと、DexScreener/RugCheck/Solana RPC/Discord/Supabaseへの複数回の
+# ネットワーク往復(数秒かかることがある)が積み重なり、卒業数が多い
+# 時間帯に処理が追いつかず「何時間も前に卒業したトークンの通知が今頃
+# 届く」という遅延が発生する(2026-07判明)。並行化することで、この
+# 遅延を大きく減らす。上げすぎると各APIのレート制限に引っかかりやすく
+# なるため注意。
+CHECKPOINT_CONCURRENCY = _env_int("CHECKPOINT_CONCURRENCY", 8)
 
 # --- スコアリングの閾値(scoring.py、いずれもDexScreenerの直近5分集計) ---
 # 出来高(USD建て)が一定以上なら加点する。

@@ -263,139 +263,193 @@ def _log_score(token: TrackedToken, score: scoring.ScoreResult, elapsed: int, ti
     )
 
 
+async def _process_token_checkpoint(
+    token: TrackedToken,
+    watcher: TokenWatcher,
+    outcomes: OutcomeTracker,
+    stats: DailyStats,
+    blocklist: CreatorBlocklist,
+    now: float,
+) -> None:
+    """1トークン分のチェックポイント処理(DexScreener再取得〜通知判定まで)。
+
+    _checkpoint_loopから、チェックポイントを迎えた各トークンについて並行
+    起動される(asyncio.gather、CHECKPOINT_CONCURRENCYで同時実行数を制限)。
+    """
+    elapsed = watcher.current_checkpoint_seconds(token)
+
+    pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, token.mint)
+    if pair is not None:
+        watcher.apply_snapshot(token, pair)
+
+    if elapsed > 0 and pair is not None:
+        # ユニーク買い手数はSolanaのオンチェーンデータから集計する
+        # (DexScreenerには無い。solana_client.py参照)。0秒チェック
+        # ポイント(卒業直後)では行わない。取引の署名取得+複数の
+        # getTransaction呼び出しが必要で数秒かかることがあり、初動の
+        # 通知速度を落としたくないため(★の情報は後の追い通知で
+        # 補う設計。discord_notifier.notify_star_upgrade参照)。
+        pool_address = pair.get("pairAddress")
+        since_unix = now - config.SOLANA_UNIQUE_BUYERS_WINDOW_SECONDS
+        unique_buyers = await asyncio.to_thread(
+            solana_client.count_unique_buyers, pool_address, token.mint, since_unix
+        )
+        watcher.apply_unique_buyers(token, unique_buyers)
+
+    if not token.rugcheck_checked:
+        # トークン1件につき1回だけ取得する(レート制限がDexScreener
+        # より厳しいため)。取得に失敗した場合はrugcheck_checkedを
+        # Trueにしないため、次のチェックポイントで再試行される。
+        report = await asyncio.to_thread(rugcheck_client.fetch_risk_report, token.mint)
+        if report is not None:
+            danger_reason = rugcheck_client.extract_danger_reason(report)
+            creator = rugcheck_client.extract_creator(report)
+            warn_count = rugcheck_client.extract_warn_count(report)
+            top10_holders_pct = rugcheck_client.extract_top_holders_pct(report)
+            watcher.apply_rugcheck_report(token, danger_reason, creator, warn_count, top10_holders_pct)
+            if danger_reason:
+                logger.info(
+                    "main: RugCheckで危険フラグを検出しました mint=%s symbol=%s reason=%s",
+                    token.mint,
+                    token.symbol,
+                    danger_reason,
+                )
+                if token.creator:
+                    # 発行者をブロックリストへ記録しておき、名前を
+                    # 変えて再発行してきても次回から即0点にする。
+                    reason = f"RugCheck危険フラグ: {danger_reason}"
+                    blocklist.record(token.creator, reason)
+                    await asyncio.to_thread(supabase_client.upsert_creator_blocklist, token.creator, reason)
+
+    if token.creator:
+        block_reason = blocklist.is_blocked(token.creator)
+        watcher.apply_creator_block(token, block_reason)
+        if block_reason and not token.rugcheck_danger:
+            logger.info(
+                "main: ブロックリスト登録済みの発行者による再発行を検出しました "
+                "mint=%s symbol=%s creator=%s reason=%s",
+                token.mint,
+                token.symbol,
+                token.creator,
+                block_reason,
+            )
+
+    score = scoring.compute_score(token)
+    tier = scoring.tier_for_score(score.total)
+    _log_score(token, score, elapsed, tier)
+
+    is_tier_upgrade = tier is not None and scoring.is_upgrade(token.notified_tier, tier)
+    star_count = scoring.star_count_for_unique_buyers(token.unique_buyers_m5)
+    action = _decide_notification_action(
+        is_tier_upgrade, tier, token.discord_notified, token.stars_followup_sent, star_count
+    )
+
+    if is_tier_upgrade:
+        token.notified_tier = tier
+
+    if action == "primary":
+        logger.info(
+            "main: 通知ラインを超えました mint=%s symbol=%s score=%d tier=%s elapsed=%d秒",
+            token.mint,
+            token.symbol,
+            score.total,
+            tier,
+            elapsed,
+        )
+        await asyncio.to_thread(discord_notifier.notify_score_update, token, score, tier, elapsed)
+        await asyncio.to_thread(
+            supabase_client.insert_notification,
+            _build_notification_row(token, score, tier, elapsed, "primary"),
+        )
+        token.discord_notified = True
+        if star_count >= 1:
+            # 初回通知の時点で既に★1つ以上なら、通知本文に含まれて
+            # いるため追い通知は不要(二重送信防止)。
+            token.stars_followup_sent = True
+        outcomes.register(
+            mint=token.mint,
+            name=token.name,
+            symbol=token.symbol,
+            tier=tier,
+            score=score.total,
+            market_cap_usd=token.market_cap_usd,
+            now=now,
+            creator=token.creator,
+        )
+    elif action == "followup":
+        logger.info(
+            "main: ユニーク買い手を確認しました(追い通知) mint=%s symbol=%s elapsed=%d秒",
+            token.mint,
+            token.symbol,
+            elapsed,
+        )
+        token.stars_followup_sent = True
+        await asyncio.to_thread(discord_notifier.notify_star_upgrade, token, score, token.notified_tier, elapsed)
+        await asyncio.to_thread(
+            supabase_client.insert_notification,
+            _build_notification_row(token, score, token.notified_tier, elapsed, "followup"),
+        )
+
+    watcher.mark_checkpoint_done(token)
+
+    if token.finished:
+        stats.record_final(token.notified_tier, score.total)
+        watcher.forget(token.mint)
+
+
 async def _checkpoint_loop(
     watcher: TokenWatcher, outcomes: OutcomeTracker, stats: DailyStats, blocklist: CreatorBlocklist
 ) -> None:
-    """定期的にチェックポイントを迎えたトークンをDexScreenerで再取得・再評価する。"""
+    """定期的にチェックポイントを迎えたトークンをDexScreenerで再取得・再評価する。
+
+    該当トークンが複数ある場合、CHECKPOINT_CONCURRENCYで上限を設けつつ
+    並行処理する(1件ずつ順番に処理すると、卒業数が多い時間帯にネット
+    ワーク往復の待ち時間が積み重なり、処理が実時間に追いつかなくなる
+    ため。2026-07判明、_process_token_checkpoint参照)。
+    """
+    semaphore = asyncio.Semaphore(config.CHECKPOINT_CONCURRENCY)
+
+    async def _run_bounded(token: TrackedToken, now: float) -> None:
+        async with semaphore:
+            await _process_token_checkpoint(token, watcher, outcomes, stats, blocklist, now)
+
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         now = time.time()
         stats.maybe_reset(now)
 
-        for token in watcher.due_for_checkpoint(now):
-            elapsed = watcher.current_checkpoint_seconds(token)
+        due_tokens = watcher.due_for_checkpoint(now)
+        if due_tokens:
+            await asyncio.gather(*(_run_bounded(token, now) for token in due_tokens))
 
-            pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, token.mint)
-            if pair is not None:
-                watcher.apply_snapshot(token, pair)
 
-            if elapsed > 0 and pair is not None:
-                # ユニーク買い手数はSolanaのオンチェーンデータから集計する
-                # (DexScreenerには無い。solana_client.py参照)。0秒チェック
-                # ポイント(卒業直後)では行わない。取引の署名取得+複数の
-                # getTransaction呼び出しが必要で数秒かかることがあり、初動の
-                # 通知速度を落としたくないため(★の情報は後の追い通知で
-                # 補う設計。discord_notifier.notify_star_upgrade参照)。
-                pool_address = pair.get("pairAddress")
-                since_unix = now - config.SOLANA_UNIQUE_BUYERS_WINDOW_SECONDS
-                unique_buyers = await asyncio.to_thread(
-                    solana_client.count_unique_buyers, pool_address, token.mint, since_unix
-                )
-                watcher.apply_unique_buyers(token, unique_buyers)
+async def _process_outcome_checkpoint(
+    outcome: TrackedOutcome, outcomes: OutcomeTracker, blocklist: CreatorBlocklist
+) -> None:
+    """1トークン分の結果チェックポイント処理。_outcome_loopから並行起動される。"""
+    pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, outcome.mint)
+    if pair is not None:
+        market_cap = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
+        outcomes.update_market_cap(outcome.mint, market_cap)
 
-            if not token.rugcheck_checked:
-                # トークン1件につき1回だけ取得する(レート制限がDexScreener
-                # より厳しいため)。取得に失敗した場合はrugcheck_checkedを
-                # Trueにしないため、次のチェックポイントで再試行される。
-                report = await asyncio.to_thread(rugcheck_client.fetch_risk_report, token.mint)
-                if report is not None:
-                    danger_reason = rugcheck_client.extract_danger_reason(report)
-                    creator = rugcheck_client.extract_creator(report)
-                    warn_count = rugcheck_client.extract_warn_count(report)
-                    top10_holders_pct = rugcheck_client.extract_top_holders_pct(report)
-                    watcher.apply_rugcheck_report(token, danger_reason, creator, warn_count, top10_holders_pct)
-                    if danger_reason:
-                        logger.info(
-                            "main: RugCheckで危険フラグを検出しました mint=%s symbol=%s reason=%s",
-                            token.mint,
-                            token.symbol,
-                            danger_reason,
-                        )
-                        if token.creator:
-                            # 発行者をブロックリストへ記録しておき、名前を
-                            # 変えて再発行してきても次回から即0点にする。
-                            reason = f"RugCheck危険フラグ: {danger_reason}"
-                            blocklist.record(token.creator, reason)
-                            await asyncio.to_thread(
-                                supabase_client.upsert_creator_blocklist, token.creator, reason
-                            )
+    checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
+    change_pct = outcomes.record_and_advance(outcome)
+    await asyncio.to_thread(
+        supabase_client.insert_outcome, _build_outcome_row(outcome, checkpoint_seconds, change_pct)
+    )
+    if outcome.creator and change_pct <= config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT:
+        logger.info(
+            "main: 通知後の大暴落を検出しました mint=%s symbol=%s change_pct=%.1f%%",
+            outcome.mint,
+            outcome.symbol,
+            change_pct,
+        )
+        reason = f"通知後に{change_pct:.0f}%下落"
+        blocklist.record(outcome.creator, reason)
+        await asyncio.to_thread(supabase_client.upsert_creator_blocklist, outcome.creator, reason)
 
-            if token.creator:
-                block_reason = blocklist.is_blocked(token.creator)
-                watcher.apply_creator_block(token, block_reason)
-                if block_reason and not token.rugcheck_danger:
-                    logger.info(
-                        "main: ブロックリスト登録済みの発行者による再発行を検出しました "
-                        "mint=%s symbol=%s creator=%s reason=%s",
-                        token.mint,
-                        token.symbol,
-                        token.creator,
-                        block_reason,
-                    )
-
-            score = scoring.compute_score(token)
-            tier = scoring.tier_for_score(score.total)
-            _log_score(token, score, elapsed, tier)
-
-            is_tier_upgrade = tier is not None and scoring.is_upgrade(token.notified_tier, tier)
-            star_count = scoring.star_count_for_unique_buyers(token.unique_buyers_m5)
-            action = _decide_notification_action(
-                is_tier_upgrade, tier, token.discord_notified, token.stars_followup_sent, star_count
-            )
-
-            if is_tier_upgrade:
-                token.notified_tier = tier
-
-            if action == "primary":
-                logger.info(
-                    "main: 通知ラインを超えました mint=%s symbol=%s score=%d tier=%s elapsed=%d秒",
-                    token.mint,
-                    token.symbol,
-                    score.total,
-                    tier,
-                    elapsed,
-                )
-                await asyncio.to_thread(discord_notifier.notify_score_update, token, score, tier, elapsed)
-                await asyncio.to_thread(
-                    supabase_client.insert_notification,
-                    _build_notification_row(token, score, tier, elapsed, "primary"),
-                )
-                token.discord_notified = True
-                if star_count >= 1:
-                    # 初回通知の時点で既に★1つ以上なら、通知本文に含まれて
-                    # いるため追い通知は不要(二重送信防止)。
-                    token.stars_followup_sent = True
-                outcomes.register(
-                    mint=token.mint,
-                    name=token.name,
-                    symbol=token.symbol,
-                    tier=tier,
-                    score=score.total,
-                    market_cap_usd=token.market_cap_usd,
-                    now=now,
-                    creator=token.creator,
-                )
-            elif action == "followup":
-                logger.info(
-                    "main: ユニーク買い手を確認しました(追い通知) mint=%s symbol=%s elapsed=%d秒",
-                    token.mint,
-                    token.symbol,
-                    elapsed,
-                )
-                token.stars_followup_sent = True
-                await asyncio.to_thread(
-                    discord_notifier.notify_star_upgrade, token, score, token.notified_tier, elapsed
-                )
-                await asyncio.to_thread(
-                    supabase_client.insert_notification,
-                    _build_notification_row(token, score, token.notified_tier, elapsed, "followup"),
-                )
-
-            watcher.mark_checkpoint_done(token)
-
-            if token.finished:
-                stats.record_final(token.notified_tier, score.total)
-                watcher.forget(token.mint)
+    if outcome.finished:
+        outcomes.forget(outcome.mint)
 
 
 async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -> None:
@@ -403,34 +457,20 @@ async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -
 
     通知時点から大暴落(config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT以上の
     下落)したと判明した場合、その発行者をブロックリストへ追加する。
+    _checkpoint_loopと同じ理由でCHECKPOINT_CONCURRENCYを上限に並行処理する。
     """
+    semaphore = asyncio.Semaphore(config.CHECKPOINT_CONCURRENCY)
+
+    async def _run_bounded(outcome: TrackedOutcome) -> None:
+        async with semaphore:
+            await _process_outcome_checkpoint(outcome, outcomes, blocklist)
+
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         now = time.time()
-        for outcome in outcomes.due_for_checkpoint(now):
-            pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, outcome.mint)
-            if pair is not None:
-                market_cap = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
-                outcomes.update_market_cap(outcome.mint, market_cap)
-
-            checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
-            change_pct = outcomes.record_and_advance(outcome)
-            await asyncio.to_thread(
-                supabase_client.insert_outcome, _build_outcome_row(outcome, checkpoint_seconds, change_pct)
-            )
-            if outcome.creator and change_pct <= config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT:
-                logger.info(
-                    "main: 通知後の大暴落を検出しました mint=%s symbol=%s change_pct=%.1f%%",
-                    outcome.mint,
-                    outcome.symbol,
-                    change_pct,
-                )
-                reason = f"通知後に{change_pct:.0f}%下落"
-                blocklist.record(outcome.creator, reason)
-                await asyncio.to_thread(supabase_client.upsert_creator_blocklist, outcome.creator, reason)
-
-            if outcome.finished:
-                outcomes.forget(outcome.mint)
+        due_outcomes = outcomes.due_for_checkpoint(now)
+        if due_outcomes:
+            await asyncio.gather(*(_run_bounded(outcome) for outcome in due_outcomes))
 
 
 async def _stats_loop(stats: DailyStats) -> None:
