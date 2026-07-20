@@ -82,6 +82,62 @@ def test_insert_notification_failure_does_not_raise():
         supabase_client.insert_notification({"mint": "MINT1"})  # 例外を送出しないことを確認
 
 
+def _http_error(code: int, headers: dict | None = None) -> "urllib.error.HTTPError":
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        url="https://project-ref.supabase.co/rest/v1/notifications",
+        code=code,
+        msg="rate limited" if code == 429 else "error",
+        hdrs=headers or {},
+        fp=None,
+    )
+
+
+def test_insert_notification_retries_once_on_429_then_succeeds(monkeypatch):
+    monkeypatch.setattr(supabase_client.time, "sleep", lambda _seconds: None)
+    responses = [_http_error(429), _response({})]
+
+    def fake_urlopen(*_args, **_kwargs):
+        result = responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen) as mock_urlopen:
+        supabase_client.insert_notification({"mint": "MINT1"})
+        assert mock_urlopen.call_count == 2
+
+
+def test_insert_notification_gives_up_after_one_retry_on_repeated_429(monkeypatch):
+    monkeypatch.setattr(supabase_client.time, "sleep", lambda _seconds: None)
+    with patch("urllib.request.urlopen", side_effect=_http_error(429)) as mock_urlopen:
+        supabase_client.insert_notification({"mint": "MINT1"})  # 例外を送出しないことを確認
+        assert mock_urlopen.call_count == 2  # 初回 + 1回だけ再試行
+
+
+def test_insert_notification_does_not_retry_on_non_429_http_error(monkeypatch):
+    monkeypatch.setattr(supabase_client.time, "sleep", lambda _seconds: None)
+    with patch("urllib.request.urlopen", side_effect=_http_error(403)) as mock_urlopen:
+        supabase_client.insert_notification({"mint": "MINT1"})
+        mock_urlopen.assert_called_once()
+
+
+def test_retry_after_seconds_uses_header_when_present():
+    exc = _http_error(429, headers={"Retry-After": "2"})
+    assert supabase_client._retry_after_seconds(exc) == 2.0
+
+
+def test_retry_after_seconds_caps_header_value():
+    exc = _http_error(429, headers={"Retry-After": "999"})
+    assert supabase_client._retry_after_seconds(exc) == supabase_client._RATE_LIMIT_MAX_WAIT_SECONDS
+
+
+def test_retry_after_seconds_falls_back_to_default_when_missing():
+    exc = _http_error(429)
+    assert supabase_client._retry_after_seconds(exc) == supabase_client._RATE_LIMIT_DEFAULT_WAIT_SECONDS
+
+
 def test_fetch_returns_none_when_not_configured(monkeypatch):
     monkeypatch.setattr(config, "SUPABASE_URL", "")
     with patch("urllib.request.urlopen") as mock_urlopen:

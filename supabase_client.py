@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +23,23 @@ import config
 logger = logging.getLogger("phantom_sniper")
 
 _REQUEST_TIMEOUT_SECONDS = 10
+# Supabase無料枠はレート制限(HTTP 429)が発生しやすい。1回だけ短く待って
+# 再試行することで、単発の混雑による書き込み欠落(ダッシュボードの「詳細」
+# ページが「通知履歴が見つかりません」になる主因)を減らす。Retry-After
+# ヘッダーがあればそれに従い、無ければ既定値を使う(いずれも上限あり)。
+_RATE_LIMIT_MAX_RETRIES = 1
+_RATE_LIMIT_DEFAULT_WAIT_SECONDS = 1.5
+_RATE_LIMIT_MAX_WAIT_SECONDS = 5.0
+
+
+def _retry_after_seconds(exc: urllib.error.HTTPError) -> float:
+    raw = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if raw is not None:
+        try:
+            return min(float(raw), _RATE_LIMIT_MAX_WAIT_SECONDS)
+        except ValueError:
+            pass
+    return _RATE_LIMIT_DEFAULT_WAIT_SECONDS
 
 
 def is_configured() -> bool:
@@ -47,13 +65,22 @@ def _request(method: str, path: str, *, body: dict | list | None = None, extra_p
 
     url = f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, headers=_headers(extra_prefer), method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
-            return resp.read()
-    except (urllib.error.URLError, OSError) as exc:
-        logger.warning("supabase_client: %s %sに失敗しました: %s", method, path, exc)
-        return None
+    retries_left = _RATE_LIMIT_MAX_RETRIES
+    while True:
+        req = urllib.request.Request(url, data=data, headers=_headers(extra_prefer), method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and retries_left > 0:
+                retries_left -= 1
+                time.sleep(_retry_after_seconds(exc))
+                continue
+            logger.warning("supabase_client: %s %sに失敗しました: %s", method, path, exc)
+            return None
+        except (urllib.error.URLError, OSError) as exc:
+            logger.warning("supabase_client: %s %sに失敗しました: %s", method, path, exc)
+            return None
 
 
 def insert_notification(row: dict) -> None:
