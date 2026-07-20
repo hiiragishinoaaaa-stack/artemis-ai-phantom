@@ -163,16 +163,33 @@ def _build_message(token: TrackedToken, score_total: int) -> str:
     return "\n".join(lines)
 
 
+def _detail_url(token: TrackedToken) -> str:
+    """「詳細」ボタンの遷移先を決める。
+
+    DexScreenerの当該ペアページ(出来高・チャート・保有者リンク等が
+    見れる、外部サービスなのでこちら側のダッシュボード/Supabaseが
+    落ちていても常に見れる)を優先する。取得できていない場合のみ、
+    設定されていればダッシュボード(DASHBOARD_PUBLIC_URL、任意)の
+    /token/{mint}にフォールバックする。どちらも無ければ空文字を返す
+    (呼び出し元でボタン自体を付けない)。
+    """
+    if token.dexscreener_url:
+        return token.dexscreener_url
+    if config.DASHBOARD_PUBLIC_URL:
+        return f"{config.DASHBOARD_PUBLIC_URL.rstrip('/')}/token/{token.mint}"
+    return ""
+
+
 def _build_components(token: TrackedToken) -> list[dict]:
     """通知メッセージに添えるボタン行を組み立てる(Link(URL)スタイルのみ。
     Bot側のインタラクション応答が不要なため、Webhookからの送信だけで完結する)。
 
-    DASHBOARD_PUBLIC_URLが設定されていれば「詳細」ボタン(ダッシュボードの
-    /token/{mint}へ)を先頭に、「Phantomで開く」ボタンは常に付ける。
+    「詳細」ボタン(_detail_url参照)を先頭に、「Phantomで開く」ボタンは
+    常に付ける。
     """
     buttons = []
-    if config.DASHBOARD_PUBLIC_URL:
-        detail_url = f"{config.DASHBOARD_PUBLIC_URL.rstrip('/')}/token/{token.mint}"
+    detail_url = _detail_url(token)
+    if detail_url:
         buttons.append(
             {
                 "type": _COMPONENT_TYPE_BUTTON,

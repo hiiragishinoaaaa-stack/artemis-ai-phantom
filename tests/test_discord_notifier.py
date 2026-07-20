@@ -46,6 +46,7 @@ def _token(name: str = "Test Coin", symbol: str = "TEST", unique_buyers_m5: int 
     token.top10_holders_pct = overrides.get("top10_holders_pct")
     token.has_twitter = overrides.get("has_twitter", False)
     token.has_telegram = overrides.get("has_telegram", False)
+    token.dexscreener_url = overrides.get("dexscreener_url", "")
     return token
 
 
@@ -149,6 +150,49 @@ def test_notify_includes_detail_button_when_dashboard_url_set(monkeypatch):
         assert buttons[0]["label"] == "詳細"
         assert buttons[0]["url"] == "http://76.13.180.239:8790/token/MintAddr123"
         assert buttons[1]["label"] == "Phantomで開く"
+
+
+def test_notify_detail_button_prefers_dexscreener_url_over_dashboard(monkeypatch):
+    """SupabaseやDASHBOARD_PUBLIC_URLが無くても(落ちていても)、DexScreenerの
+    ページは外部サービスなので常に「詳細」ボタンが機能する(こちら優先)。"""
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "http://76.13.180.239:8790")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(
+            _token(dexscreener_url="https://dexscreener.com/solana/MintAddr123"), _score(85), "WATCH", 60
+        )
+        payload = _sent_payload(mock_urlopen)
+        buttons = payload["components"][0]["components"]
+        assert buttons[0]["label"] == "詳細"
+        assert buttons[0]["url"] == "https://dexscreener.com/solana/MintAddr123"
+
+
+def test_notify_detail_button_falls_back_to_dashboard_when_no_dexscreener_url(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "http://76.13.180.239:8790")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(dexscreener_url=""), _score(85), "WATCH", 60)
+        payload = _sent_payload(mock_urlopen)
+        buttons = payload["components"][0]["components"]
+        assert buttons[0]["label"] == "詳細"
+        assert buttons[0]["url"] == "http://76.13.180.239:8790/token/MintAddr123"
+
+
+def test_notify_omits_detail_button_when_neither_dexscreener_url_nor_dashboard_url_set(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(dexscreener_url=""), _score(85), "WATCH", 60)
+        payload = _sent_payload(mock_urlopen)
+        buttons = payload["components"][0]["components"]
+        assert len(buttons) == 1
+        assert buttons[0]["label"] == "Phantomで開く"
 
 
 def test_notify_includes_name_and_symbol_when_present(monkeypatch):
