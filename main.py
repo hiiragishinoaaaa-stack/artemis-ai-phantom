@@ -410,8 +410,11 @@ async def _checkpoint_loop(
     semaphore = asyncio.Semaphore(config.CHECKPOINT_CONCURRENCY)
 
     async def _run_bounded(token: TrackedToken, now: float) -> None:
-        async with semaphore:
-            await _process_token_checkpoint(token, watcher, outcomes, stats, blocklist, now)
+        try:
+            async with semaphore:
+                await _process_token_checkpoint(token, watcher, outcomes, stats, blocklist, now)
+        finally:
+            watcher.clear_in_flight(token)
 
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
@@ -420,6 +423,13 @@ async def _checkpoint_loop(
 
         due_tokens = watcher.due_for_checkpoint(now)
         if due_tokens:
+            # in_flightは(セマフォ待ちの間も含めて)スケジュールした瞬間に
+            # 同期的に立てる。そうしないと、セマフォの空き待ちで実処理が
+            # まだ始まっていないトークンを、次のポーリングでdue_for_
+            # checkpoint()がもう一度返してしまい、同じチェックポイントを
+            # 二重に処理してしまう(token_watcher.py参照)。
+            for token in due_tokens:
+                watcher.mark_in_flight(token)
             await asyncio.gather(*(_run_bounded(token, now) for token in due_tokens))
 
 
@@ -462,14 +472,19 @@ async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -
     semaphore = asyncio.Semaphore(config.CHECKPOINT_CONCURRENCY)
 
     async def _run_bounded(outcome: TrackedOutcome) -> None:
-        async with semaphore:
-            await _process_outcome_checkpoint(outcome, outcomes, blocklist)
+        try:
+            async with semaphore:
+                await _process_outcome_checkpoint(outcome, outcomes, blocklist)
+        finally:
+            outcomes.clear_in_flight(outcome)
 
     while True:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         now = time.time()
         due_outcomes = outcomes.due_for_checkpoint(now)
         if due_outcomes:
+            for outcome in due_outcomes:
+                outcomes.mark_in_flight(outcome)
             await asyncio.gather(*(_run_bounded(outcome) for outcome in due_outcomes))
 
 

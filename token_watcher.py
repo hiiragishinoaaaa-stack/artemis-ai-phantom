@@ -70,6 +70,12 @@ class TrackedToken:
     # ポイントのインデックス。最後まで処理し終えるとfinished=Trueになる。
     checkpoint_index: int = 0
     finished: bool = False
+    # 現在このトークンのチェックポイント処理が実行中(main.py側で並行処理
+    # 中)かどうか。1件の処理がポーリング間隔(5秒)より長くかかった場合、
+    # このフラグが無いとdue_for_checkpoint()が同じトークンを再度「処理待ち」
+    # として返してしまい、同じチェックポイントが二重に(並行して)処理
+    # されてしまう(通知が重複して送られる等の原因になる。2026-07判明)。
+    in_flight: bool = False
     # これまでに通知した最高の通知レベル("LOW"/"WATCH"/"HIGH"またはNone)。
     # スコアが上昇して通知ラインを更新した瞬間だけ再通知するために使う。
     # 注意: LOWの場合もnotified_tierは更新されるが、実際にDiscordへは
@@ -183,12 +189,15 @@ class TokenWatcher:
         token.blocked_creator_reason = reason or ""
 
     def due_for_checkpoint(self, now: float) -> list[TrackedToken]:
-        """次のチェックポイント時刻を過ぎ、まだそのチェックポイントを処理していない
-        トークンの一覧を返す(呼び出し側が定期的にポーリングする想定)。
+        """次のチェックポイント時刻を過ぎ、まだそのチェックポイントを処理しておらず、
+        かつ現在処理中でもないトークンの一覧を返す(呼び出し側が定期的に
+        ポーリングする想定)。in_flightのトークンを除外するのは、1件の処理が
+        ポーリング間隔より長くかかった場合に同じチェックポイントを二重に
+        並行処理してしまうのを防ぐため(mark_in_flight参照)。
         """
         due = []
         for token in self._tokens.values():
-            if token.finished:
+            if token.finished or token.in_flight:
                 continue
             checkpoint_seconds = config.MIGRATION_CHECKPOINTS_SECONDS[token.checkpoint_index]
             if now - token.migrated_at >= checkpoint_seconds:
@@ -198,6 +207,20 @@ class TokenWatcher:
     def current_checkpoint_seconds(self, token: TrackedToken) -> int:
         """このトークンが今まさに処理しようとしているチェックポイント(卒業からの経過秒)。"""
         return config.MIGRATION_CHECKPOINTS_SECONDS[token.checkpoint_index]
+
+    def mark_in_flight(self, token: TrackedToken) -> None:
+        """チェックポイント処理を開始する直前に呼び出す(due_for_checkpoint()が
+        同じトークンを二重に返さないようにするためのガード。呼び出し側は
+        必ずtry/finallyでclear_in_flight()と対にすること(main.py参照)。
+        """
+        token.in_flight = True
+
+    def clear_in_flight(self, token: TrackedToken) -> None:
+        """チェックポイント処理が終わった(成功・失敗を問わず)直後にfinally節から
+        呼び出す。呼ばないと、そのトークンは永久にin_flightのまま=二度と
+        チェックポイント処理されなくなる。
+        """
+        token.in_flight = False
 
     def mark_checkpoint_done(self, token: TrackedToken) -> None:
         """チェックポイント処理後に1回呼び出し、次のチェックポイントへ進める。

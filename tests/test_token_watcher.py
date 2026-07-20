@@ -237,6 +237,41 @@ def test_due_for_checkpoint_excludes_finished_tokens():
     assert watcher.due_for_checkpoint(now=100000.0) == []
 
 
+def test_due_for_checkpoint_excludes_in_flight_tokens():
+    """1件の処理がポーリング間隔より長くかかった場合でも、同じトークンが
+    二重に(並行して)処理されないことを確認する(2026-07判明のバグの
+    再発防止)。"""
+    watcher = TokenWatcher()
+    token = _start(watcher, now=1000.0)
+    watcher.mark_in_flight(token)
+
+    assert watcher.due_for_checkpoint(now=1000.0) == []
+
+
+def test_clear_in_flight_makes_token_due_again():
+    watcher = TokenWatcher()
+    token = _start(watcher, now=1000.0)
+    watcher.mark_in_flight(token)
+    watcher.clear_in_flight(token)
+
+    due = watcher.due_for_checkpoint(now=1000.0)
+    assert len(due) == 1
+    assert due[0].mint == "MINT1"
+
+
+def test_mark_checkpoint_done_does_not_by_itself_clear_in_flight():
+    """in_flightの解除はmark_checkpoint_done()の責務ではなく、呼び出し側の
+    finally節(clear_in_flight)の責務であることを確認する(main.py参照、
+    処理中に例外が起きてもin_flightが解除されるようにするため)。"""
+    watcher = TokenWatcher()
+    token = _start(watcher, now=1000.0)
+    watcher.mark_in_flight(token)
+    watcher.mark_checkpoint_done(token)
+
+    assert token.in_flight is True
+    assert watcher.due_for_checkpoint(now=2000.0) == []
+
+
 def test_current_checkpoint_seconds_advances():
     watcher = TokenWatcher()
     token = _start(watcher, now=1000.0)

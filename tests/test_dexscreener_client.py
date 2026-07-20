@@ -50,6 +50,27 @@ def test_fetch_best_pair_picks_highest_liquidity_among_solana_pairs():
         assert pair["url"] == "high"
 
 
+def test_fetch_best_pair_excludes_pumpfun_bonding_curve_pair():
+    """卒業前のpump.funボンディングカーブ自体のペア(dexId=pumpfun)は、
+    流動性が高くても除外し、卒業後の実際のDEXペアだけを対象にする
+    (2026-07判明。同じmintに両方のペアが並存し得るため)。"""
+    payload = {
+        "pairs": [
+            {"chainId": "solana", "dexId": "pumpfun", "liquidity": {"usd": 99999.0}, "url": "bonding-curve"},
+            {"chainId": "solana", "dexId": "pumpswap", "liquidity": {"usd": 100.0}, "url": "post-migration"},
+        ]
+    }
+    with patch("urllib.request.urlopen", return_value=_response(payload)):
+        pair = dexscreener_client.fetch_best_pair("MINT1")
+        assert pair["url"] == "post-migration"
+
+
+def test_fetch_best_pair_returns_none_when_only_pumpfun_pair_exists():
+    payload = {"pairs": [{"chainId": "solana", "dexId": "pumpfun", "liquidity": {"usd": 500.0}, "url": "x"}]}
+    with patch("urllib.request.urlopen", return_value=_response(payload)):
+        assert dexscreener_client.fetch_best_pair("MINT1") is None
+
+
 def test_fetch_best_pair_returns_none_on_network_error():
     with patch("urllib.request.urlopen", side_effect=OSError("network down")):
         assert dexscreener_client.fetch_best_pair("MINT1") is None

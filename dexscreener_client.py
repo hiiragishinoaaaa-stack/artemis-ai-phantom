@@ -31,12 +31,25 @@ _REQUEST_TIMEOUT_SECONDS = 10
 _USER_AGENT = "Mozilla/5.0 (compatible; ARTEMIS-Phantom-Sniper/1.0)"
 
 
+_EXCLUDED_DEX_IDS = {"pumpfun"}
+
+
 def fetch_best_pair(mint: str) -> dict | None:
     """指定したmintの、DexScreener上で最も流動性の高いSolanaペア情報を返す。
 
     まだDEXに存在しない(卒業直後でDexScreenerのインデックスが追いついて
     いない等)場合や、取得に失敗した場合はNoneを返す(呼び出し側は
     「まだデータなし」として扱い、例外は送出しない)。
+
+    卒業(migration)済みのトークンは、DexScreener上に卒業前のpump.fun
+    ボンディングカーブ自体のペア(dexId="pumpfun")と、卒業後の実際の
+    DEX(Raydium/PumpSwap等)のペアの**2つ**が並存することがある
+    (2026-07判明。前者は卒業のずっと前に作成されているため、流動性次第
+    ではこちらが「最も流動性の高いペア」として選ばれてしまい、出来高・
+    価格変動・詳細リンクの行き先がチェックポイントのたびにどちらの
+    ペアかブレる、というバグの原因になっていた)。このbotはそもそも
+    「卒業後の実際のDEX取引状況」だけを見る設計のため、pumpfunの
+    ボンディングカーブ自体のペアは常に除外する。
     """
     url = f"{config.DEXSCREENER_API_BASE_URL}/latest/dex/tokens/{mint}"
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
@@ -50,7 +63,11 @@ def fetch_best_pair(mint: str) -> dict | None:
     if not isinstance(data, dict):
         return None
     pairs = data.get("pairs") or []
-    solana_pairs = [p for p in pairs if isinstance(p, dict) and p.get("chainId") == "solana"]
+    solana_pairs = [
+        p
+        for p in pairs
+        if isinstance(p, dict) and p.get("chainId") == "solana" and p.get("dexId") not in _EXCLUDED_DEX_IDS
+    ]
     if not solana_pairs:
         return None
 

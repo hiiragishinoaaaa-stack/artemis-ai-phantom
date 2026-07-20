@@ -65,6 +65,27 @@ def test_due_for_checkpoint_respects_first_checkpoint():
     assert due[0].mint == "MINT1"
 
 
+def test_due_for_checkpoint_excludes_in_flight_outcomes():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0)
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    tracker.mark_in_flight(outcome)
+
+    assert tracker.due_for_checkpoint(now=1000.0 + 1800) == []
+
+
+def test_clear_in_flight_makes_outcome_due_again():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0)
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    tracker.mark_in_flight(outcome)
+    tracker.clear_in_flight(outcome)
+
+    due = tracker.due_for_checkpoint(now=1000.0 + 1800)
+    assert len(due) == 1
+    assert due[0].mint == "MINT1"
+
+
 def test_record_and_advance_writes_jsonl_and_advances_checkpoint():
     tracker = OutcomeTracker()
     _register(tracker, now=1000.0, market_cap_usd=10000.0)

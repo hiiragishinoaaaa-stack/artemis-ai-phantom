@@ -44,6 +44,9 @@ class TrackedOutcome:
     creator: str = ""
     checkpoint_index: int = 0
     finished: bool = False
+    # main.pyが並行処理中に、同じチェックポイントを二重処理しないための
+    # ガード(token_watcher.TrackedToken.in_flightと同じ理由)。
+    in_flight: bool = False
 
 
 class OutcomeTracker:
@@ -95,15 +98,30 @@ class OutcomeTracker:
             outcome.last_market_cap_usd = market_cap_usd
 
     def due_for_checkpoint(self, now: float) -> list[TrackedOutcome]:
-        """次の結果チェックポイント時刻を過ぎた追跡対象の一覧を返す。"""
+        """次の結果チェックポイント時刻を過ぎ、現在処理中でもない追跡対象の
+        一覧を返す(in_flight除外の理由はtoken_watcher.TokenWatcher.
+        due_for_checkpointと同じ)。
+        """
         due = []
         for outcome in self._outcomes.values():
-            if outcome.finished:
+            if outcome.finished or outcome.in_flight:
                 continue
             checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
             if now - outcome.notified_at >= checkpoint_seconds:
                 due.append(outcome)
         return due
+
+    def mark_in_flight(self, outcome: TrackedOutcome) -> None:
+        """結果チェックポイント処理を開始する直前に呼び出す。呼び出し側は
+        必ずtry/finallyでclear_in_flight()と対にすること(main.py参照)。
+        """
+        outcome.in_flight = True
+
+    def clear_in_flight(self, outcome: TrackedOutcome) -> None:
+        """結果チェックポイント処理が終わった(成功・失敗を問わず)直後に
+        finally節から呼び出す。
+        """
+        outcome.in_flight = False
 
     def record_and_advance(self, outcome: TrackedOutcome) -> float:
         """チェックポイントの結果を1件JSONLへ追記し、次のチェックポイントへ進める。
