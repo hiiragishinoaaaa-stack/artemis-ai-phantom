@@ -344,6 +344,45 @@ sudo ufw allow 8790/tcp
 `DASHBOARD_API_TOKEN`を`.env`で設定している場合は、ページ上部の入力欄に
 同じ値を貼って「保存」を押すと認証される(未設定なら何もしなくてよい)。
 
+## チャット返信Bot(任意、遊び機能)
+
+`chat_reply_bot.py`は、特定の1人が特定の言葉を発言したら固定の返信を
+送るだけの、スキャナー本体とは無関係な遊び機能(止まっていても本体
+[`main.py`]には一切影響しない)。通知用のWebhookは送信専用で他人の
+発言を読み取れないため、これだけは読み取り権限を持つ普通のDiscord Bot
+として実装している(`discord.py`使用)。
+
+1. [Discord Developer Portal](https://discord.com/developers/applications)
+   を開き、「New Application」で適当な名前のアプリを作成する。
+2. 左メニューの「Bot」→「Reset Token」でBotトークンを発行し、コピーする
+   (秘密鍵、`.env`にのみ設定する)。
+3. 同じ「Bot」ページの「Privileged Gateway Intents」で
+   **MESSAGE CONTENT INTENT** をONにする(発言内容を読み取るために必須)。
+4. 左メニューの「OAuth2」→「URL Generator」で、SCOPESに`bot`、
+   BOT PERMISSIONSに`Send Messages`・`Read Messages/View Channels`を
+   チェックし、生成されたURLを開いて自分のサーバーに招待する。
+5. 反応してほしい相手のDiscordユーザーIDを確認する(Discordアプリの
+   設定→詳細設定→開発者モードをON→相手のアイコンを長押し/右クリック→
+   「IDをコピー」)。
+
+`.env`に以下を設定する:
+
+```
+CHAT_REPLY_ENABLED=true
+DISCORD_BOT_TOKEN=(手順2で発行したトークン)
+CHAT_REPLY_TARGET_USER_ID=(手順5で確認したユーザーID)
+CHAT_REPLY_TRIGGER_WORD=おやすみ
+CHAT_REPLY_MESSAGE=おやすみー!♥️
+```
+
+```
+# systemdサービスとして起動(phantom-sniperと同じ.envを共有する)
+sudo cp systemd/phantom-chat-reply.service /etc/systemd/system/
+sudo sed -i "s|__PHANTOM_USER__|$(whoami)|g; s|__PHANTOM_HOME__|/opt/artemis|g" /etc/systemd/system/phantom-chat-reply.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now phantom-chat-reply
+```
+
 ## VPSへのデプロイ(systemd)
 
 ```

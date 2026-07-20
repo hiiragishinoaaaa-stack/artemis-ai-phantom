@@ -219,6 +219,23 @@ DASHBOARD_API_TOKEN = os.getenv("DASHBOARD_API_TOKEN", "")
 # ダッシュボードの「直近の通知」一覧に表示する最大件数。
 DASHBOARD_RECENT_NOTIFICATIONS_LIMIT = _env_int("DASHBOARD_RECENT_NOTIFICATIONS_LIMIT", 50)
 
+# --- チャット返信Bot(chat_reply_bot.py、任意。本体のスキャナー機能とは
+# 完全に独立した別プロセス・別Discordアプリで、無くても本体には一切影響
+# しない)。特定の1人が特定の言葉を発言したら固定の返信を送るだけの、
+# ちょっとした遊び機能。Webhook(送信専用)では他人の発言を検知できない
+# ため、メッセージ内容を読み取れる権限を持つ普通のDiscord Botが必要
+# (Discord Developer Portalでアプリ作成→Bot追加→トークン発行→サーバーに
+# 招待し、"MESSAGE CONTENT INTENT"を有効化する。README.md参照)。 ---
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+CHAT_REPLY_ENABLED = _env_bool("CHAT_REPLY_ENABLED", False)
+# 反応する相手のDiscordユーザーID(数値。ユーザー本人の設定で開発者モードを
+# 有効にし、自分のアイコンを長押し/右クリック→「IDをコピー」で確認できる)。
+CHAT_REPLY_TARGET_USER_ID = _env_int("CHAT_REPLY_TARGET_USER_ID", 0)
+# この言葉が発言に含まれていたら反応する(部分一致)。
+CHAT_REPLY_TRIGGER_WORD = os.getenv("CHAT_REPLY_TRIGGER_WORD", "おやすみ")
+# 反応する固定の返信内容。
+CHAT_REPLY_MESSAGE = os.getenv("CHAT_REPLY_MESSAGE", "おやすみー!♥️")
+
 # --- ログ ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_DIR = BASE_DIR / "logs"

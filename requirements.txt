@@ -1,2 +1,5 @@
 websockets>=13.0
 python-dotenv>=1.0.0
+# chat_reply_bot.py(任意の遊び機能)専用。CHAT_REPLY_ENABLED=falseなら
+# インストールしていても一切使われない。
+discord.py>=2.4
