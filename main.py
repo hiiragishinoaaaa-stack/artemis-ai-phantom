@@ -40,7 +40,9 @@ import solana_client
 import supabase_client
 from creator_blocklist import CreatorBlocklist
 from logger import setup_logger
+import trade_executor
 from outcome_tracker import OutcomeTracker, TrackedOutcome
+from position_tracker import PositionTracker
 from pumpportal_client import PumpPortalClient
 from token_name_history import TokenNameHistory
 from token_watcher import TokenWatcher, TrackedToken
@@ -285,6 +287,7 @@ async def _process_token_checkpoint(
     outcomes: OutcomeTracker,
     stats: DailyStats,
     blocklist: CreatorBlocklist,
+    positions: PositionTracker,
     now: float,
 ) -> None:
     """1トークン分のチェックポイント処理(DexScreener再取得〜通知判定まで)。
@@ -354,6 +357,14 @@ async def _process_token_checkpoint(
     tier = scoring.tier_for_score(score.total)
     _log_score(token, score, elapsed, tier)
 
+    # ⚠️ 自動売買(既定OFF、config.AUTO_TRADE_ENABLED/AUTO_TRADE_CONFIRMED_
+    # RISKの両方がtrueでない限りtrade_executor.should_auto_buy()は常に
+    # Falseを返すため何もしない。詳細はtrade_executor.py・README.md参照)。
+    if not positions.has_any_position(token.mint):
+        should_buy, _reason = trade_executor.should_auto_buy(token, elapsed, score.total, positions.open_count())
+        if should_buy:
+            await asyncio.to_thread(trade_executor.execute_buy, token, positions, now)
+
     is_tier_upgrade = tier is not None and scoring.is_upgrade(token.notified_tier, tier)
     star_count = scoring.star_count_for_unique_buyers(token.unique_buyers_m5)
     action = _decide_notification_action(
@@ -414,7 +425,11 @@ async def _process_token_checkpoint(
 
 
 async def _checkpoint_loop(
-    watcher: TokenWatcher, outcomes: OutcomeTracker, stats: DailyStats, blocklist: CreatorBlocklist
+    watcher: TokenWatcher,
+    outcomes: OutcomeTracker,
+    stats: DailyStats,
+    blocklist: CreatorBlocklist,
+    positions: PositionTracker,
 ) -> None:
     """定期的にチェックポイントを迎えたトークンをDexScreenerで再取得・再評価する。
 
@@ -428,7 +443,7 @@ async def _checkpoint_loop(
     async def _run_bounded(token: TrackedToken, now: float) -> None:
         try:
             async with semaphore:
-                await _process_token_checkpoint(token, watcher, outcomes, stats, blocklist, now)
+                await _process_token_checkpoint(token, watcher, outcomes, stats, blocklist, positions, now)
         finally:
             watcher.clear_in_flight(token)
 
@@ -512,6 +527,19 @@ async def _stats_loop(stats: DailyStats) -> None:
         logger.info("main: %s", stats.summary_line())
 
 
+async def _position_monitor_loop(positions: PositionTracker) -> None:
+    """⚠️ 自動売買で保有中の建玉を定期的に監視し、利確/損切り/最大保有時間
+    超過に該当すれば売却する(trade_executor.check_and_close_positions参照)。
+
+    AUTO_TRADE_ENABLED=falseの場合は何もしない(建玉自体が生まれないため)。
+    """
+    while True:
+        await asyncio.sleep(config.AUTO_TRADE_POSITION_POLL_SECONDS)
+        if not config.AUTO_TRADE_ENABLED or not config.AUTO_TRADE_CONFIRMED_RISK:
+            continue
+        await asyncio.to_thread(trade_executor.check_and_close_positions, positions, time.time())
+
+
 async def async_main() -> None:
     client = PumpPortalClient()
     watcher = TokenWatcher()
@@ -520,6 +548,13 @@ async def async_main() -> None:
     recent_names = _RecentTokenNames()
     blocklist = CreatorBlocklist()
     name_history = TokenNameHistory()
+    positions = PositionTracker()
+    auto_trade_ready, auto_trade_status = trade_executor.is_ready()
+    logger.info(
+        "main: 自動売買 status=%s ready=%s (詳細はREADME.mdの「自動売買(実験的機能)」参照)",
+        auto_trade_status,
+        auto_trade_ready,
+    )
     logger.info(
         "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s "
         "discord_enabled=%s creator_blocklist=%d件 supabase_configured=%s",
@@ -539,9 +574,10 @@ async def async_main() -> None:
 
     await asyncio.gather(
         _consume_loop(client, watcher, recent_names, name_history),
-        _checkpoint_loop(watcher, outcomes, stats, blocklist),
+        _checkpoint_loop(watcher, outcomes, stats, blocklist, positions),
         _outcome_loop(outcomes, blocklist),
         _stats_loop(stats),
+        _position_monitor_loop(positions),
     )
 
 

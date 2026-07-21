@@ -231,3 +231,50 @@ def notify_star_upgrade(
     stars = _stars_display(token.unique_buyers_m5)
     content = f"🔥 ユニーク買い手{stars}を確認\n" + _build_message(token, score.total)
     _send(content, config.DISCORD_FOLLOWUP_WEBHOOK_URL, components=_build_components(token))
+
+
+# --- 自動売買(trade_executor.py)の実行結果通知 ---
+# ⚠️ ここから下は実際に資金を動かす自動売買機能に関する通知。
+# DISCORD_TRADE_WEBHOOK_URL未設定なら何も送らない。
+
+
+def notify_trade_opened(position) -> None:  # type: ignore[no-untyped-def]
+    """自動購入が成功した直後に呼び出す(trade_executor.execute_buy参照)。"""
+    label = f"{position.name} (${position.symbol})" if position.name else f"${position.symbol}"
+    content = (
+        f"🟢 自動購入しました\n{label}\n"
+        f"購入額: {position.entry_amount_sol} SOL / エントリー価格: ${position.entry_price_usd:.8f}\n"
+        f"tx: {position.open_tx_signature}"
+    )
+    _send(content, config.DISCORD_TRADE_WEBHOOK_URL)
+
+
+def notify_trade_closed(position) -> None:  # type: ignore[no-untyped-def]
+    """自動売却(利確/損切り/最大保有時間超過)が成功した直後に呼び出す。"""
+    reason_label = {
+        "take_profit": "利確",
+        "stop_loss": "損切り",
+        "max_hold": "最大保有時間超過",
+        "manual": "手動",
+    }.get(position.close_reason, position.close_reason)
+    label = f"{position.name} (${position.symbol})" if position.name else f"${position.symbol}"
+    emoji = "🔵" if position.pnl_pct >= 0 else "🔴"
+    content = (
+        f"{emoji} 自動売却しました({reason_label})\n{label}\n"
+        f"損益: {position.pnl_pct:+.1f}% (エントリー ${position.entry_price_usd:.8f} → "
+        f"決済 ${position.exit_price_usd:.8f})\n"
+        f"tx: {position.close_tx_signature}"
+    )
+    _send(content, config.DISCORD_TRADE_WEBHOOK_URL)
+
+
+def notify_trade_failure(token: TrackedToken, action: str, error: str) -> None:
+    """買い/売り注文自体が失敗した場合に呼び出す(トークンオブジェクトがある場合)。"""
+    notify_trade_failure_by_mint(token.mint, token.name, token.symbol, action, error)
+
+
+def notify_trade_failure_by_mint(mint: str, name: str, symbol: str, action: str, error: str) -> None:
+    """買い/売り注文自体が失敗した場合に呼び出す(建玉オブジェクトしか無い場合)。"""
+    label = f"{name} (${symbol})" if name else (f"${symbol}" if symbol else mint)
+    content = f"⚠️ 自動{action}に失敗しました\n{label}\n理由: {error}"
+    _send(content, config.DISCORD_TRADE_WEBHOOK_URL)

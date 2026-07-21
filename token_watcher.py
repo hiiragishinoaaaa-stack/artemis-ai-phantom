@@ -43,6 +43,10 @@ class TrackedToken:
     price_change_m5_pct: float = 0.0
     liquidity_usd: float = 0.0
     market_cap_usd: float = 0.0
+    # トークン1個あたりのUSD価格(DexScreenerのpriceUsd)。スコアには使わない
+    # (加点対象ではないため)が、trade_executor.pyの自動売買が損益率を
+    # 計算するのに使う。
+    price_usd: float = 0.0
     # RugCheckレポートを取得済みかどうか(1トークンにつき1回だけ取得する
     # ため、main.pyがこのフラグで二重取得を防ぐ)。
     rugcheck_checked: bool = False
@@ -141,6 +145,12 @@ class TokenWatcher:
         token.price_change_m5_pct = float((pair.get("priceChange") or {}).get("m5") or 0.0)
         token.liquidity_usd = float((pair.get("liquidity") or {}).get("usd") or 0.0)
         token.market_cap_usd = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
+        price_usd = pair.get("priceUsd")
+        if price_usd is not None:
+            try:
+                token.price_usd = float(price_usd)
+            except (TypeError, ValueError):
+                pass
         url = pair.get("url")
         if url:
             token.dexscreener_url = str(url)

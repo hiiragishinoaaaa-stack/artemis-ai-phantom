@@ -3,3 +3,7 @@ python-dotenv>=1.0.0
 # chat_reply_bot.py(任意の遊び機能)専用。CHAT_REPLY_ENABLED=falseなら
 # インストールしていても一切使われない。
 discord.py>=2.4
+# trade_executor.py(⚠️自動売買、既定OFF)専用。Solanaトランザクションの
+# 署名に必要な軽量ライブラリ(solana-py全体ではなくsoldersのみで足りる)。
+# AUTO_TRADE_ENABLED=falseなら実質使われない。
+solders>=0.28

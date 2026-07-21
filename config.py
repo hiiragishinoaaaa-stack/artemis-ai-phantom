@@ -166,6 +166,86 @@ TOKEN_NAME_HISTORY_FILE_PATH = (
     else BASE_DIR / "logs" / "token_name_history.json"
 )
 
+# --- 自動売買(trade_executor.py、jupiter_client.py、wallet.py) ---
+# ⚠️ 実際にウォレットの資金を使って売買する機能。既定は完全にOFF。
+# 有効化するには以下を全て満たす必要がある(事故防止の二重ゲート):
+#   1. AUTO_TRADE_ENABLED=true
+#   2. AUTO_TRADE_CONFIRMED_RISK=true(「自動売買のリスクを理解した」の
+#      明示的な確認。どちらか片方だけでは動かない)
+#   3. SOLANA_WALLET_PRIVATE_KEY設定(base58形式、Phantom等の「秘密鍵を
+#      エクスポート」で取得。ウォレットの全資金を動かせる値のため、少額
+#      専用の別ウォレットを新規に作ることを強く推奨。既存のメインウォレット
+#      の鍵は絶対に使わないこと)
+# 詳細・注意事項はREADME.mdの「自動売買(実験的機能)」参照。
+AUTO_TRADE_ENABLED = _env_bool("AUTO_TRADE_ENABLED", False)
+AUTO_TRADE_CONFIRMED_RISK = _env_bool("AUTO_TRADE_CONFIRMED_RISK", False)
+SOLANA_WALLET_PRIVATE_KEY = os.getenv("SOLANA_WALLET_PRIVATE_KEY", "")
+# このスコア以上(既定100=満点、実質RugCheck危険/発行者ブラックリスト/
+# なりすまし検出のいずれも無いこと)のトークンだけを自動購入の対象にする。
+AUTO_TRADE_MIN_SCORE = _env_int("AUTO_TRADE_MIN_SCORE", 100)
+# DEX卒業からの経過秒数がこれ以下のチェックポイントでのみ自動購入する
+# (「なるべく上がっていない初期のコイン」を狙うため。既定60秒=2番目の
+# チェックポイントまで。MIGRATION_CHECKPOINTS_SECONDS参照)。
+AUTO_TRADE_MAX_ELAPSED_SECONDS_FOR_ENTRY = _env_int("AUTO_TRADE_MAX_ELAPSED_SECONDS_FOR_ENTRY", 60)
+# 1回の購入に使うSOL量(既定0.02 SOL、少額から。価格次第だが数百〜数千円
+# 程度を想定)。
+AUTO_TRADE_BUY_AMOUNT_SOL = _env_float("AUTO_TRADE_BUY_AMOUNT_SOL", 0.02)
+# 同時に保有できる建玉数の上限(資金を1つのコインに集中させないため)。
+AUTO_TRADE_MAX_OPEN_POSITIONS = _env_int("AUTO_TRADE_MAX_OPEN_POSITIONS", 3)
+# Jupiterスワップのスリッページ許容(ベーシスポイント、100=1%)。卒業直後は
+# 値動きが激しいためやや広め。
+AUTO_TRADE_SLIPPAGE_BPS = _env_int("AUTO_TRADE_SLIPPAGE_BPS", 500)
+# 含み益がこの%以上になったら自動的に利確売りする。
+AUTO_TRADE_TAKE_PROFIT_PCT = _env_float("AUTO_TRADE_TAKE_PROFIT_PCT", 50.0)
+# 含み損がこの%(マイナス値)以下になったら自動的に損切り売りする。
+AUTO_TRADE_STOP_LOSS_PCT = _env_float("AUTO_TRADE_STOP_LOSS_PCT", -30.0)
+# 利確・損切りのどちらにも達しないまま、これ以上の秒数保有し続けたら
+# 強制的に手仕舞いする(塩漬け防止、既定1時間)。
+AUTO_TRADE_MAX_HOLD_SECONDS = _env_int("AUTO_TRADE_MAX_HOLD_SECONDS", 3600)
+# 建玉の状態を監視する間隔(秒)。
+AUTO_TRADE_POSITION_POLL_SECONDS = _env_int("AUTO_TRADE_POSITION_POLL_SECONDS", 15)
+_positions_file_path_env = os.getenv("POSITIONS_FILE_PATH")
+POSITIONS_FILE_PATH = (
+    Path(_positions_file_path_env) if _positions_file_path_env else BASE_DIR / "logs" / "positions.json"
+)
+_trades_file_path_env = os.getenv("TRADES_FILE_PATH")
+TRADES_FILE_PATH = Path(_trades_file_path_env) if _trades_file_path_env else BASE_DIR / "logs" / "trades.jsonl"
+# 自動売買の実行結果(買い/売り)を通知する専用のWebhook URL(任意、通常の
+# DISCORD_WEBHOOK_URLとは別チャンネル推奨)。
+DISCORD_TRADE_WEBHOOK_URL = os.getenv("DISCORD_TRADE_WEBHOOK_URL", "")
+
+# --- パーペチュアル(perp_sniper.py、実験的機能。ミームコインのスキャナー
+# 本体[main.py]とは完全に独立した別プロセス。動いていなくても本体には
+# 一切影響しない) ---
+# ロング/ショートシグナルの計算・通知を行うかどうか。
+PERP_ENABLED = _env_bool("PERP_ENABLED", False)
+# 監視する銘柄(カンマ区切り、Binance Futuresのシンボル表記)。
+PERP_SYMBOLS: list[str] = [s.strip() for s in os.getenv("PERP_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if s.strip()]
+# 市場データ取得元(既定Binance Futures公開API、無料・APIキー不要)。
+PERP_API_BASE_URL = os.getenv("PERP_API_BASE_URL", "https://fapi.binance.com")
+# シグナルを再計算する間隔(秒、既定15分)。
+PERP_POLL_INTERVAL_SECONDS = _env_int("PERP_POLL_INTERVAL_SECONDS", 900)
+# ローソク足の時間足・本数(EMA/RSI計算に使う)。
+PERP_KLINE_INTERVAL = os.getenv("PERP_KLINE_INTERVAL", "1h")
+PERP_KLINE_LIMIT = _env_int("PERP_KLINE_LIMIT", 100)
+# シグナル強度(-100〜100)がこの絶対値以上でLONG/SHORTと判定する
+# (未満はNEUTRALとして通知しない)。
+PERP_SIGNAL_THRESHOLD = _env_int("PERP_SIGNAL_THRESHOLD", 40)
+# シグナル通知専用のWebhook URL(任意、未設定なら送らない)。
+DISCORD_PERP_WEBHOOK_URL = os.getenv("DISCORD_PERP_WEBHOOK_URL", "")
+# ペーパートレード(モック、実資金は一切動かさない)を行うかどうか。
+# レバレッジをかけた場合の損益シミュレーションをDiscordへ通知する。
+# 実資金を動かさないため既定ON(PERP_ENABLED=trueが前提)。
+PERP_PAPER_TRADING_ENABLED = _env_bool("PERP_PAPER_TRADING_ENABLED", True)
+PERP_PAPER_LEVERAGE = _env_float("PERP_PAPER_LEVERAGE", 3.0)
+PERP_PAPER_TAKE_PROFIT_PCT = _env_float("PERP_PAPER_TAKE_PROFIT_PCT", 10.0)
+PERP_PAPER_STOP_LOSS_PCT = _env_float("PERP_PAPER_STOP_LOSS_PCT", -10.0)
+PERP_PAPER_MAX_HOLD_SECONDS = _env_int("PERP_PAPER_MAX_HOLD_SECONDS", 86400)
+_perp_positions_file_path_env = os.getenv("PERP_POSITIONS_FILE_PATH")
+PERP_POSITIONS_FILE_PATH = (
+    Path(_perp_positions_file_path_env) if _perp_positions_file_path_env else BASE_DIR / "logs" / "perp_positions.json"
+)
+
 # --- 通知後の結果トラッキング(outcome_tracker.py) ---
 # WATCH/HIGHとして通知したトークンは、それ以降もこの秒数リストの経過時点
 # ごとにDexScreenerから時価総額を取得し、通知時点からの変化率を

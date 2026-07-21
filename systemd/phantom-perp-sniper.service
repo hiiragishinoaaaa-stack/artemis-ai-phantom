@@ -1,0 +1,14 @@
+[Unit]
+Description=ARTEMIS Phantom Sniper Perpetual Signals (perp_sniper.py, experimental)
+After=network.target
+
+[Service]
+Type=simple
+User=__PHANTOM_USER__
+WorkingDirectory=__PHANTOM_HOME__/artemis-ai-phantom
+ExecStart=__PHANTOM_HOME__/artemis-ai-phantom/.venv/bin/python __PHANTOM_HOME__/artemis-ai-phantom/perp_sniper.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
