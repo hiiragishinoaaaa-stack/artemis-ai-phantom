@@ -34,13 +34,14 @@ def _token(**overrides):
     token.rugcheck_warn_count = overrides.get("rugcheck_warn_count", 0)
     token.top10_holders_pct = overrides.get("top10_holders_pct", None)
     token.blocked_creator_reason = overrides.get("blocked_creator_reason", "")
+    token.duplicate_name_reason = overrides.get("duplicate_name_reason", "")
     return token
 
 
 def test_compute_score_all_zero_when_nothing_happened():
     result = scoring.compute_score(_token())
     assert result.total == 0
-    assert len(result.components) == 10
+    assert len(result.components) == 11
 
 
 @pytest.mark.parametrize(
@@ -216,6 +217,33 @@ def test_compute_score_forces_zero_when_creator_blocklisted_even_with_max_other_
     )
     result = scoring.compute_score(token)
     assert result.total == 0
+
+
+def test_score_duplicate_name_no_match_gives_no_points():
+    assert scoring._score_duplicate_name(_token(duplicate_name_reason="")).points == 0
+
+
+def test_score_duplicate_name_match_gives_negative_penalty():
+    component = scoring._score_duplicate_name(
+        _token(duplicate_name_reason="同じ名前「PepeCoin」を名乗るトークンが既出です(先行mint: MINT0)")
+    )
+    assert component.points < 0
+    assert "MINT0" in component.detail
+
+
+def test_compute_score_reduced_but_not_zeroed_when_duplicate_name_detected():
+    token = _token(
+        buys_m5=20,
+        sells_m5=0,
+        volume_m5_usd=10000.0,
+        liquidity_usd=10000.0,
+        price_change_m5_pct=100.0,
+        rugcheck_checked=True,
+        rugcheck_danger=False,
+        duplicate_name_reason="同じ名前「PepeCoin」を名乗るトークンが既出です(先行mint: MINT0)",
+    )
+    result = scoring.compute_score(token)
+    assert 0 < result.total < 100  # dangerと違い通知は止めないが、100点は防ぐ
 
 
 @pytest.mark.parametrize(

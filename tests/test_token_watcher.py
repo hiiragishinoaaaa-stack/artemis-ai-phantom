@@ -208,6 +208,23 @@ def test_apply_creator_block_clears_reason_when_none():
     assert token.blocked_creator_reason == ""
 
 
+def test_apply_duplicate_name_sets_reason():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_duplicate_name(token, "同じ名前「Test」を名乗るトークンが既出です(先行mint: MINT0)")
+
+    assert token.duplicate_name_reason == "同じ名前「Test」を名乗るトークンが既出です(先行mint: MINT0)"
+
+
+def test_apply_duplicate_name_clears_reason_when_none():
+    watcher = TokenWatcher()
+    token = _start(watcher)
+    watcher.apply_duplicate_name(token, "some reason")
+    watcher.apply_duplicate_name(token, None)
+
+    assert token.duplicate_name_reason == ""
+
+
 def test_due_for_checkpoint_respects_first_checkpoint_of_zero():
     watcher = TokenWatcher()
     _start(watcher, now=1000.0)

@@ -93,6 +93,7 @@ def test_build_notification_row_includes_all_supabase_fields():
     token.has_twitter = True
     token.has_telegram = False
     token.creator = "CreatorAddr1"
+    token.duplicate_name_reason = "同じ名前「Test Coin」を名乗るトークンが既出です(先行mint: MINT0)"
 
     row = _build_notification_row(token, ScoreResult(total=90, components=[]), "HIGH", 60, "primary")
 
@@ -117,6 +118,7 @@ def test_build_notification_row_includes_all_supabase_fields():
         "has_twitter": True,
         "has_telegram": False,
         "creator": "CreatorAddr1",
+        "duplicate_name_reason": "同じ名前「Test Coin」を名乗るトークンが既出です(先行mint: MINT0)",
         "elapsed_seconds": 60,
     }
 

@@ -66,6 +66,12 @@ class TrackedToken:
     # その理由が入る(空文字ならブロック対象外)。scoring.pyはこの場合
     # スコアを強制的に0点にする(名前を変えて再発行されても検出できる)。
     blocked_creator_reason: str = ""
+    # 過去に同じ名前/ティッカーを別mintが使っていた(なりすまし疑い、
+    # token_name_history.TokenNameHistory参照)場合、その理由が入る
+    # (空文字なら重複なし)。scoring.pyはこの場合スコアを減点する
+    # (RugCheck危険/発行者ブラックリストと違い、通知自体は止めない。
+    # 一般的な単語の名前が偶然重複するだけの場合もあるため)。
+    duplicate_name_reason: str = ""
     # config.MIGRATION_CHECKPOINTS_SECONDSのうち、次に処理すべきチェック
     # ポイントのインデックス。最後まで処理し終えるとfinished=Trueになる。
     checkpoint_index: int = 0
@@ -187,6 +193,10 @@ class TokenWatcher:
     def apply_creator_block(self, token: TrackedToken, reason: str | None) -> None:
         """creator_blocklist.CreatorBlocklist.is_blocked()の結果をtokenへ反映する。"""
         token.blocked_creator_reason = reason or ""
+
+    def apply_duplicate_name(self, token: TrackedToken, reason: str | None) -> None:
+        """token_name_history.TokenNameHistory.check_and_record()の結果をtokenへ反映する。"""
+        token.duplicate_name_reason = reason or ""
 
     def due_for_checkpoint(self, now: float) -> list[TrackedToken]:
         """次のチェックポイント時刻を過ぎ、まだそのチェックポイントを処理しておらず、

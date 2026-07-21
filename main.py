@@ -42,6 +42,7 @@ from creator_blocklist import CreatorBlocklist
 from logger import setup_logger
 from outcome_tracker import OutcomeTracker, TrackedOutcome
 from pumpportal_client import PumpPortalClient
+from token_name_history import TokenNameHistory
 from token_watcher import TokenWatcher, TrackedToken
 
 logger = logging.getLogger("phantom_sniper")
@@ -125,7 +126,12 @@ def _utc_date_str(now: float) -> str:
     return datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, recent_names: _RecentTokenNames) -> None:
+async def _consume_loop(
+    client: PumpPortalClient,
+    watcher: TokenWatcher,
+    recent_names: _RecentTokenNames,
+    name_history: TokenNameHistory,
+) -> None:
     """PumpPortalからのメッセージを受け取り、卒業(migration)イベントを検知する。
 
     subscribeTokenTradeは使っていないため、このWebSocket上で流れてくる
@@ -161,6 +167,7 @@ async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, recent_
             name, symbol = recent_names.get(mint)
 
         logger.debug("main: migration想定イベントを受信 raw=%s", message)
+        is_new = watcher.get(mint) is None
         token = watcher.start_tracking(mint=mint, name=name, symbol=symbol, now=time.time())
         logger.info(
             "main: DEX卒業を検知しました mint=%s name=%s symbol=%s",
@@ -168,6 +175,14 @@ async def _consume_loop(client: PumpPortalClient, watcher: TokenWatcher, recent_
             token.name,
             token.symbol,
         )
+
+        if is_new:
+            duplicate_reason = name_history.check_and_record(mint, name, symbol)
+            if duplicate_reason:
+                watcher.apply_duplicate_name(token, duplicate_reason)
+                logger.info(
+                    "main: 名前/ティッカーの重複を検出しました mint=%s reason=%s", mint, duplicate_reason
+                )
 
 
 def _decide_notification_action(
@@ -228,6 +243,7 @@ def _build_notification_row(
         "has_twitter": token.has_twitter,
         "has_telegram": token.has_telegram,
         "creator": token.creator,
+        "duplicate_name_reason": token.duplicate_name_reason,
         "elapsed_seconds": elapsed_seconds,
     }
 
@@ -503,6 +519,7 @@ async def async_main() -> None:
     stats = DailyStats()
     recent_names = _RecentTokenNames()
     blocklist = CreatorBlocklist()
+    name_history = TokenNameHistory()
     logger.info(
         "main: 監視を開始します checkpoints=%s秒(DEX卒業からの経過) high>=%s watch>=%s low>=%s "
         "discord_enabled=%s creator_blocklist=%d件 supabase_configured=%s",
@@ -521,7 +538,7 @@ async def async_main() -> None:
         )
 
     await asyncio.gather(
-        _consume_loop(client, watcher, recent_names),
+        _consume_loop(client, watcher, recent_names, name_history),
         _checkpoint_loop(watcher, outcomes, stats, blocklist),
         _outcome_loop(outcomes, blocklist),
         _stats_loop(stats),

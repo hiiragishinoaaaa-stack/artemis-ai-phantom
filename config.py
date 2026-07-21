@@ -156,6 +156,16 @@ CREATOR_BLOCKLIST_FILE_PATH = (
 # main.py参照)。
 CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT = _env_float("CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT", -90.0)
 
+# --- 名前/ティッカー重複履歴(token_name_history.py) ---
+# 既に観測した名前/ティッカーを別mintが後から名乗った場合(なりすまし
+# 対策)を検出するための記録先。
+_token_name_history_file_path_env = os.getenv("TOKEN_NAME_HISTORY_FILE_PATH")
+TOKEN_NAME_HISTORY_FILE_PATH = (
+    Path(_token_name_history_file_path_env)
+    if _token_name_history_file_path_env
+    else BASE_DIR / "logs" / "token_name_history.json"
+)
+
 # --- 通知後の結果トラッキング(outcome_tracker.py) ---
 # WATCH/HIGHとして通知したトークンは、それ以降もこの秒数リストの経過時点
 # ごとにDexScreenerから時価総額を取得し、通知時点からの変化率を
@@ -186,6 +196,9 @@ PHANTOM_REFERRAL_ID = os.getenv("PHANTOM_REFERRAL_ID", "")
 # をそのまま値に設定すればよい(既定は標準の絵文字)。
 DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI = os.getenv("DISCORD_HOLDER_CONCENTRATION_WARN_EMOJI", "⚠️")
 DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI = os.getenv("DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
+# 名前/ティッカー重複(なりすまし疑い、token_name_history.py参照)を検出
+# した通知に付ける警告絵文字。
+DISCORD_DUPLICATE_NAME_EMOJI = os.getenv("DISCORD_DUPLICATE_NAME_EMOJI", "🚨")
 DISCORD_TWITTER_EMOJI = os.getenv("DISCORD_TWITTER_EMOJI", "🐦")
 DISCORD_TELEGRAM_EMOJI = os.getenv("DISCORD_TELEGRAM_EMOJI", "✈️")
 

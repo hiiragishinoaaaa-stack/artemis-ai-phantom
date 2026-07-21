@@ -17,6 +17,7 @@
 --   alter table notifications add column if not exists top10_holders_pct numeric;
 --   alter table notifications add column if not exists has_twitter boolean not null default false;
 --   alter table notifications add column if not exists has_telegram boolean not null default false;
+--   alter table notifications add column if not exists duplicate_name_reason text not null default '';
 
 -- --- 通知履歴(HIGH/WATCH通知、および★3つ到達の追い通知) ---
 create table if not exists notifications (
@@ -41,6 +42,7 @@ create table if not exists notifications (
     has_twitter boolean not null default false,
     has_telegram boolean not null default false,
     creator text not null default '',
+    duplicate_name_reason text not null default '',
     elapsed_seconds int not null default 0,
     notified_at timestamptz not null default now()
 );

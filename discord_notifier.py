@@ -149,6 +149,9 @@ def _build_message(token: TrackedToken, score_total: int) -> str:
         score_line_parts.append(holder_badge)
     lines = [" ".join(score_line_parts)]
 
+    if token.duplicate_name_reason:
+        lines.append(f"{config.DISCORD_DUPLICATE_NAME_EMOJI} なりすまし注意: {token.duplicate_name_reason}")
+
     name = token.name.strip()
     symbol = token.symbol.strip()
     social_badges = _social_badges(token)

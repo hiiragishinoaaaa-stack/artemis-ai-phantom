@@ -577,6 +577,7 @@ function renderStatCards(latest) {
     ['X連携', latest.has_twitter ? 'あり' : 'なし'],
     ['Telegram連携', latest.has_telegram ? 'あり' : 'なし'],
     ['発行者(creator)', latest.creator || '-'],
+    ['なりすまし注意', latest.duplicate_name_reason || 'なし'],
   ];
   var html = '';
   cards.forEach(function (c) {

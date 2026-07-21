@@ -20,6 +20,7 @@ def _patch_config(monkeypatch):
     monkeypatch.setattr(config, "DISCORD_HOLDER_CONCENTRATION_HEALTHY_EMOJI", "✅")
     monkeypatch.setattr(config, "DISCORD_TWITTER_EMOJI", "🐦")
     monkeypatch.setattr(config, "DISCORD_TELEGRAM_EMOJI", "✈️")
+    monkeypatch.setattr(config, "DISCORD_DUPLICATE_NAME_EMOJI", "🚨")
     monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "")
 
 
@@ -47,6 +48,7 @@ def _token(name: str = "Test Coin", symbol: str = "TEST", unique_buyers_m5: int 
     token.has_twitter = overrides.get("has_twitter", False)
     token.has_telegram = overrides.get("has_telegram", False)
     token.dexscreener_url = overrides.get("dexscreener_url", "")
+    token.duplicate_name_reason = overrides.get("duplicate_name_reason", "")
     return token
 
 
@@ -213,6 +215,33 @@ def test_notify_omits_name_line_when_both_empty(monkeypatch):
         discord_notifier.notify_score_update(_token(name="", symbol=""), _score(80), "HIGH", 60)
         content = _sent_content(mock_urlopen)
         assert content.count("\n") == 0  # スコア行のみ
+
+
+def test_notify_shows_duplicate_name_warning(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(
+            _token(duplicate_name_reason="同じ名前「Test Coin」を名乗るトークンが既出です(先行mint: MINT0)"),
+            _score(80),
+            "HIGH",
+            60,
+        )
+        content = _sent_content(mock_urlopen)
+        assert "🚨" in content
+        assert "なりすまし注意" in content
+        assert "MINT0" in content
+
+
+def test_notify_omits_duplicate_name_warning_when_no_duplicate(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_ENABLED", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        discord_notifier.notify_score_update(_token(duplicate_name_reason=""), _score(80), "HIGH", 60)
+        content = _sent_content(mock_urlopen)
+        assert "なりすまし注意" not in content
 
 
 def test_notify_uses_custom_discord_emoji_for_holder_badge(monkeypatch):

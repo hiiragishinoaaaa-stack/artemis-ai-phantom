@@ -203,6 +203,24 @@ def _score_creator_blocklist(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("発行者ブラックリスト", 0, "ブラックリスト該当なし")
 
 
+# 過去に既出の名前/ティッカーを別mintが後から名乗っている(なりすまし
+# 疑い、token_name_history.py参照)場合の減点。RugCheck危険/発行者
+# ブラックリストと違い通知自体は止めないほど強くはしない(一般的な単語の
+# 名前が偶然重複するだけの場合もあり、機会を潰したくないため)。ただし
+# 「見た瞬間に100点⭐⭐⭐が付く」のを防ぐには十分な大きさにしている。
+_DUPLICATE_NAME_PENALTY = -50
+
+
+def _score_duplicate_name(token: TrackedToken) -> ScoreComponent:
+    if token.duplicate_name_reason:
+        return ScoreComponent(
+            "名前/ティッカー重複",
+            _DUPLICATE_NAME_PENALTY,
+            f"{token.duplicate_name_reason}({_DUPLICATE_NAME_PENALTY}点)",
+        )
+    return ScoreComponent("名前/ティッカー重複", 0, "重複なし")
+
+
 # 将来項目を追加する場合はここに関数を1つ足すだけでよい(TrackedTokenを
 # 受け取りScoreComponentを返す関数であること。他の項目とは完全に独立)。
 _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
@@ -216,6 +234,7 @@ _SCORERS: list[Callable[[TrackedToken], ScoreComponent]] = [
     _score_rugcheck_warnings,
     _score_holder_concentration,
     _score_creator_blocklist,
+    _score_duplicate_name,
 ]
 
 
