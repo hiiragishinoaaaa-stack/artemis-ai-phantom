@@ -231,10 +231,16 @@ CHAT_REPLY_ENABLED = _env_bool("CHAT_REPLY_ENABLED", False)
 # 反応する相手のDiscordユーザーID(数値。ユーザー本人の設定で開発者モードを
 # 有効にし、自分のアイコンを長押し/右クリック→「IDをコピー」で確認できる)。
 CHAT_REPLY_TARGET_USER_ID = _env_int("CHAT_REPLY_TARGET_USER_ID", 0)
-# この言葉が発言に含まれていたら反応する(部分一致)。
-CHAT_REPLY_TRIGGER_WORD = os.getenv("CHAT_REPLY_TRIGGER_WORD", "おやすみ")
-# 反応する固定の返信内容。
-CHAT_REPLY_MESSAGE = os.getenv("CHAT_REPLY_MESSAGE", "おやすみー!♥️")
+# 「この言葉が発言に含まれていたらこう返す」のペアを複数登録できる
+# (CHAT_REPLY_TRIGGER_WORD_1/CHAT_REPLY_MESSAGE_1、_2、_3...と番号を振る。
+# 最大10個まで、番号は飛んでいても良い。1件も設定しなければ何もしない)。
+# 発言に複数の言葉が含まれる場合、番号の小さいペアが優先される。
+_CHAT_REPLY_MAX_PAIRS = 10
+CHAT_REPLY_PAIRS: list[tuple[str, str]] = [
+    (trigger, os.getenv(f"CHAT_REPLY_MESSAGE_{i}", ""))
+    for i in range(1, _CHAT_REPLY_MAX_PAIRS + 1)
+    if (trigger := os.getenv(f"CHAT_REPLY_TRIGGER_WORD_{i}"))
+]
 
 # --- ログ ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

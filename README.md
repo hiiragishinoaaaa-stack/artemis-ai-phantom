@@ -383,14 +383,21 @@ sudo ufw allow 8790/tcp
    設定→詳細設定→開発者モードをON→相手のアイコンを長押し/右クリック→
    「IDをコピー」)。
 
-`.env`に以下を設定する:
+`.env`に以下を設定する。「この言葉を含む発言→この返信」のペアは
+`CHAT_REPLY_TRIGGER_WORD_1`/`CHAT_REPLY_MESSAGE_1`のように番号付きで
+最大10個まで好きなだけ登録できる(1つの発言に複数の言葉が含まれる場合は
+番号の小さいペアが優先される):
 
 ```
 CHAT_REPLY_ENABLED=true
 DISCORD_BOT_TOKEN=(手順2で発行したトークン)
 CHAT_REPLY_TARGET_USER_ID=(手順5で確認したユーザーID)
-CHAT_REPLY_TRIGGER_WORD=おやすみ
-CHAT_REPLY_MESSAGE=おやすみー!♥️
+CHAT_REPLY_TRIGGER_WORD_1=おはよう
+CHAT_REPLY_MESSAGE_1=おはよー!♥️
+CHAT_REPLY_TRIGGER_WORD_2=おやすみ
+CHAT_REPLY_MESSAGE_2=おやすみ~
+CHAT_REPLY_TRIGGER_WORD_3=可愛い
+CHAT_REPLY_MESSAGE_3=ありがとー!!
 ```
 
 ```
