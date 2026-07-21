@@ -408,6 +408,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now phantom-chat-reply
 ```
 
+`.env`を書き換えた後にBotへ反映させるには再起動が必要。スマホのブラウザ
+端末では長いコマンドの貼り付けが途中で欠けやすいため、以下の短い1行
+だけで「再起動→状態確認→直近ログ表示」までまとめて行うスクリプトを
+用意している(初回だけ実行すれば、以降は`botrestart`という短い
+コマンド1つで再起動できるようになる):
+
+```
+curl -fsSL https://raw.githubusercontent.com/hiiragishinoaaaa-stack/artemis-ai-phantom/main/scripts/restart_chat_reply.sh | sudo bash
+```
+
 ## VPSへのデプロイ(systemd)
 
 ```
