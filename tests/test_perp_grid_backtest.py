@@ -55,6 +55,36 @@ def test_run_grid_backtest_stop_loss_closes_position():
     assert stop_losses[0].pnl_pct == pytest.approx(-0.5 * 3.0)
 
 
+def test_run_grid_backtest_take_profit_deducts_fees():
+    candles = [
+        _candle(0, 100, 100, 100, 100),
+        _candle(1, 100, 102, 100, 101),
+        _candle(2, 100, 100, 100, 100),
+    ]
+    result = run_grid_backtest(
+        candles, range_pct=10.0, grid_count=10, take_profit_pct=1.0, stop_loss_pct=-0.5, leverage=3.0,
+        fee_pct_per_side=0.02,
+    )
+    take_profits = [t for t in result.trades if t.reason == "take_profit"]
+    assert len(take_profits) >= 1
+    # 利確1.0% * 3倍 - 往復手数料(0.02%*2*3倍) = 3.0 - 0.12 = 2.88
+    assert take_profits[0].pnl_pct == pytest.approx(1.0 * 3.0 - 2 * 0.02 * 3.0)
+
+
+def test_run_grid_backtest_zero_fee_matches_default_behavior():
+    candles = [
+        _candle(0, 100, 100, 100, 100),
+        _candle(1, 100, 102, 100, 101),
+    ]
+    with_zero_fee = run_grid_backtest(
+        candles, range_pct=10.0, grid_count=10, take_profit_pct=1.0, stop_loss_pct=-0.5, leverage=3.0, fee_pct_per_side=0.0
+    )
+    without_fee_arg = run_grid_backtest(
+        candles, range_pct=10.0, grid_count=10, take_profit_pct=1.0, stop_loss_pct=-0.5, leverage=3.0
+    )
+    assert with_zero_fee.trades[0].pnl_pct == without_fee_arg.trades[0].pnl_pct
+
+
 def test_run_grid_backtest_win_rate_and_total_pnl():
     result = GridBacktestResult(
         trades=[
@@ -128,3 +158,17 @@ def test_print_report_shows_stats_and_buy_and_hold(capsys):
     captured = capsys.readouterr()
     assert "取引数: 1件" in captured.out
     assert "Buy & Hold" in captured.out
+
+
+def test_print_report_notes_fee_assumption(capsys):
+    result = GridBacktestResult(trades=[GridTrade(100.0, 101.0, 0.0, 1.0, "take_profit", 3.0)])
+    _print_report(result, "BTCUSDT", leverage=3.0, fee_pct_per_side=0.02)
+    captured = capsys.readouterr()
+    assert "手数料0.020%考慮済み" in captured.out
+
+
+def test_print_report_notes_no_fee_by_default(capsys):
+    result = GridBacktestResult(trades=[GridTrade(100.0, 101.0, 0.0, 1.0, "take_profit", 3.0)])
+    _print_report(result, "BTCUSDT", leverage=3.0)
+    captured = capsys.readouterr()
+    assert "手数料は未考慮" in captured.out

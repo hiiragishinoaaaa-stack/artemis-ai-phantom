@@ -596,6 +596,7 @@ sudo systemctl enable --now phantom-perp-sniper
 .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT
 .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT --interval 4h --limit 1500 --range-pct 15 --grid-count 50
 .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT --daily-loss-limit -20
+.venv/bin/python perp_grid_backtest.py --symbol BTCUSDT --fee-pct-per-side 0.02
 ```
 
 価格レンジは検証開始時点の価格を中心に固定する。**価格がレンジを大きく
@@ -604,6 +605,15 @@ sudo systemctl enable --now phantom-perp-sniper
 中で利確・損切りの両方に価格が触れた場合、tickデータが無いためどちらが
 先だったかは分からず、このツールは利確を優先して判定する(やや楽観的な
 見積もりになり得る点に注意)。
+
+**`--fee-pct-per-side`は既定0(手数料なし)。** グリッドトレードは1回
+あたりの利益が小さい分、取引回数が数百〜数千件になりやすく、手数料の
+有無で結果が全く変わる。**必ず取引所の実際のMaker/Taker手数料率を
+指定した結果も確認すること。** 手数料なしの結果だけを見て判断しないこと
+(実際の検証(2026-07、BTCUSDT・手数料未考慮)では2ヶ月で取引数698件・
+勝率49.1%・合計+99.3%、8〜9ヶ月では取引数2277件・勝率64.1%・合計
++630.9%とBuy & Holdを大きく上回ったが、これは手数料ゼロという非現実的な
+前提での数字であり、実際の手数料を加味した結果はまだ確認できていない)。
 
 ## 分析ツール(`analyze_outcomes.py`、実験的機能)
 

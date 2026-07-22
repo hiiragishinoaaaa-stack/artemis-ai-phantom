@@ -21,10 +21,16 @@
 データが無いため)。このツールはTPを優先して判定する(やや楽観的な
 見積もりになる可能性がある点に注意)。
 
+既定は手数料0%(未考慮)。グリッドトレードは取引回数が非常に多くなり
+やすく(1000〜2000件超も珍しくない)、手数料の有無で結果が全く変わる。
+必ず`--fee-pct-per-side`を使って手数料を加味した結果も確認すること
+(取引所のMaker/Taker手数料率を調べて指定する)。
+
 使い方:
   .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT
   .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT --interval 4h --limit 1500 --range-pct 15 --grid-count 50
   .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT --daily-loss-limit -20
+  .venv/bin/python perp_grid_backtest.py --symbol BTCUSDT --fee-pct-per-side 0.02
 """
 from __future__ import annotations
 
@@ -97,6 +103,7 @@ def run_grid_backtest(
     stop_loss_pct: float,
     leverage: float,
     daily_loss_limit_pct: float | None = None,
+    fee_pct_per_side: float = 0.0,
 ) -> GridBacktestResult:
     """candles((時刻, 始値, 高値, 安値, 終値)のペア、古い順)に対して
     買いグリッド戦略を機械的に適用する(純粋関数、ネットワーク非依存)。
@@ -105,6 +112,12 @@ def run_grid_backtest(
     「レンジ内で動き続ける」前提の戦略のため、EMA等で動的に追従させる
     トレンド戦略とは考え方が異なる)。各グリッド水準は同時に1つの建玉しか
     持たない(利確/損切りで決済されたら、その水準はまた買える状態に戻る)。
+
+    fee_pct_per_side(片道の手数料率、既定0=手数料なし)は、1回の往復
+    (買い+売り)につき`2 * fee_pct_per_side * leverage`をpnl_pctから
+    差し引く(グリッドトレードは取引回数が非常に多くなりやすく、手数料が
+    利益を大きく削る可能性がある。参考にしたgrid trading記事でも
+    「週の手数料だけで数千USD、結果はトントン」と報告されている)。
     """
     result = GridBacktestResult()
     if not candles or grid_count <= 0:
@@ -123,6 +136,7 @@ def run_grid_backtest(
 
     open_positions: dict[int, dict] = {}
     daily_pnl: dict[str, float] = {}
+    round_trip_fee_pct = 2 * fee_pct_per_side * leverage
 
     for now, _open_price, high, low, _close in candles:
         day_key = _day_key(now)
@@ -133,12 +147,12 @@ def run_grid_backtest(
             tp_price = entry * (1 + take_profit_pct / 100)
             sl_price = entry * (1 + stop_loss_pct / 100)  # stop_loss_pctはマイナス値
             if high >= tp_price:
-                pnl_pct = take_profit_pct * leverage
+                pnl_pct = take_profit_pct * leverage - round_trip_fee_pct
                 result.trades.append(GridTrade(entry, tp_price, pos["opened_at"], now, "take_profit", pnl_pct))
                 daily_pnl[day_key] = daily_pnl.get(day_key, 0.0) + pnl_pct
                 del open_positions[level_index]
             elif low <= sl_price:
-                pnl_pct = stop_loss_pct * leverage
+                pnl_pct = stop_loss_pct * leverage - round_trip_fee_pct
                 result.trades.append(GridTrade(entry, sl_price, pos["opened_at"], now, "stop_loss", pnl_pct))
                 daily_pnl[day_key] = daily_pnl.get(day_key, 0.0) + pnl_pct
                 del open_positions[level_index]
@@ -163,8 +177,9 @@ def run_grid_backtest(
     return result
 
 
-def _print_report(result: GridBacktestResult, symbol: str, leverage: float) -> None:
-    print(f"=== {symbol} グリッドトレード バックテスト結果(レバレッジ{leverage}倍) ===")
+def _print_report(result: GridBacktestResult, symbol: str, leverage: float, fee_pct_per_side: float = 0.0) -> None:
+    fee_note = f"、片道手数料{fee_pct_per_side:.3f}%考慮済み" if fee_pct_per_side else "、手数料は未考慮(0%)"
+    print(f"=== {symbol} グリッドトレード バックテスト結果(レバレッジ{leverage}倍{fee_note}) ===")
     print(
         f"レンジ: ${result.lower_bound:,.2f} 〜 ${result.upper_bound:,.2f} "
         f"(中心${result.center_price:,.2f}、グリッド間隔約{result.grid_step_pct:.2f}%)"
@@ -211,6 +226,13 @@ def main() -> None:
         default=None,
         help="1日の損益(%)がこの値(マイナス)を下回ったら、その日は新規グリッド注文を停止する(既定: 制限なし)",
     )
+    parser.add_argument(
+        "--fee-pct-per-side",
+        type=float,
+        default=0.0,
+        help="片道の取引手数料率(%%、既定0=手数料なし)。例: Maker手数料0.02%%相当なら0.02を指定。"
+        "往復で2倍×レバレッジ分がpnlから差し引かれる",
+    )
     args = parser.parse_args()
 
     candles = perp_market_data.fetch_ohlc_with_time(args.symbol, args.interval, args.limit)
@@ -226,8 +248,9 @@ def main() -> None:
         args.stop_loss,
         args.leverage,
         daily_loss_limit_pct=args.daily_loss_limit,
+        fee_pct_per_side=args.fee_pct_per_side,
     )
-    _print_report(result, args.symbol, args.leverage)
+    _print_report(result, args.symbol, args.leverage, args.fee_pct_per_side)
 
 
 if __name__ == "__main__":
