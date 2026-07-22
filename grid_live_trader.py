@@ -71,6 +71,7 @@ class GridLiveTracker:
 
     def __init__(self) -> None:
         self._centers: dict[str, float] = {}
+        self._last_prices: dict[str, float] = {}
         self._positions: dict[str, dict[int, GridLivePosition]] = {}
         self._load()
 
@@ -81,6 +82,16 @@ class GridLiveTracker:
         if symbol not in self._centers:
             self._centers[symbol] = price
             self._save()
+
+    def last_price(self, symbol: str) -> float | None:
+        """直前のポーリングで観測した価格(価格が実際にその水準を通過したか
+        判定するための基準。Noneなら「まだ一度も観測していない」)。
+        """
+        return self._last_prices.get(symbol)
+
+    def set_last_price(self, symbol: str, price: float) -> None:
+        self._last_prices[symbol] = price
+        self._save()
 
     def has_open_position(self, symbol: str, level_index: int) -> bool:
         pos = self._positions.get(symbol, {}).get(level_index)
@@ -129,6 +140,7 @@ class GridLiveTracker:
             if not isinstance(data, dict):
                 return
             self._centers = {str(k): float(v) for k, v in (data.get("centers") or {}).items()}
+            self._last_prices = {str(k): float(v) for k, v in (data.get("last_prices") or {}).items()}
             positions_raw = data.get("positions") or {}
             self._positions = {
                 symbol: {int(level_index): GridLivePosition(**fields) for level_index, fields in levels.items()}
@@ -144,6 +156,7 @@ class GridLiveTracker:
             tmp_path = path.with_suffix(".tmp")
             data = {
                 "centers": self._centers,
+                "last_prices": self._last_prices,
                 "positions": {
                     symbol: {str(level_index): asdict(pos) for level_index, pos in levels.items()}
                     for symbol, levels in self._positions.items()

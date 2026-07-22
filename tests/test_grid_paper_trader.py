@@ -85,3 +85,17 @@ def test_corrupt_file_starts_empty():
     config.PERP_GRID_POSITIONS_FILE_PATH.write_text("not json", encoding="utf-8")
     tracker = GridPaperTracker()
     assert tracker.open_positions() == []
+
+
+def test_last_price_is_none_before_first_set():
+    tracker = GridPaperTracker()
+    assert tracker.last_price("BTCUSDT") is None
+
+
+def test_set_last_price_persists_to_disk_and_reloads():
+    tracker = GridPaperTracker()
+    tracker.set_last_price("BTCUSDT", 100.0)
+    assert tracker.last_price("BTCUSDT") == 100.0
+
+    reloaded = GridPaperTracker()
+    assert reloaded.last_price("BTCUSDT") == 100.0

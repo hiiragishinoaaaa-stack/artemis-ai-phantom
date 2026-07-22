@@ -91,6 +91,20 @@ def test_tracker_persists_to_disk_and_reloads():
     assert reloaded.has_open_position("BTC", 3) is True
 
 
+def test_last_price_is_none_before_first_set():
+    tracker = GridLiveTracker()
+    assert tracker.last_price("BTC") is None
+
+
+def test_set_last_price_persists_to_disk_and_reloads():
+    tracker = GridLiveTracker()
+    tracker.set_last_price("BTC", 95.2)
+    assert tracker.last_price("BTC") == 95.2
+
+    reloaded = GridLiveTracker()
+    assert reloaded.last_price("BTC") == 95.2
+
+
 def test_execute_open_records_position_on_success():
     tracker = GridLiveTracker()
     result = OrderResult(success=True, avg_price=95.2, filled_size=0.00105)

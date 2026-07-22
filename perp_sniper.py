@@ -122,11 +122,18 @@ async def _signal_loop(positions: PaperPerpTracker) -> None:
 def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: float) -> None:
     """1銘柄分のグリッド処理(新規約定判定+利確/損切り判定)。
 
-    perp_grid_backtest.pyがローソク足の高値・安値で「その足の間に触れたか」
-    を判定するのに対し、こちらはポーリング時点の単一価格(マーク価格)だけを
-    見る(grid_trading.decide_grid_exit_reason参照)。買いグリッドの約定は
-    指値注文と同じ考え方で「価格がその水準以下まで下がったら約定」とする
-    (current_price <= level)。
+    perp_grid_backtest.pyはローソク足の高値・安値で「その足の間に触れたか」
+    (low <= level <= high)を判定する。こちらはポーリング間隔ごとの単一価格
+    (マーク価格)しか取れないため、代わりに「前回ポーリング時の価格〜今回の
+    価格」の区間にその水準が入っていたか(=実際に価格がそこを通過したか)で
+    判定する。前回価格が無い(起動直後の初回ポーリング)場合は、まだ何も
+    「通過」していないので一切約定させず、今回価格を基準として記録するだけに
+    とどめる。
+
+    これは意図的な設計: 単純に「現在価格 <= 水準」だけで判定すると、中心価格
+    より上にある水準は起動した瞬間に(価格が一度も動いていなくても)すべて
+    trueになってしまい、グリッドの半分近くが初回ポーリングで一斉に約定した
+    ように誤判定してしまう(実際にこのバグで発生した事象)。
     """
     current_price = perp_market_data.fetch_mark_price(symbol)
     if current_price is None:
@@ -144,11 +151,15 @@ def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: flo
                 position, current_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_FEE_PCT_PER_SIDE
             )
 
-    for level_index, level_price in enumerate(levels):
-        if grid_positions.has_open_position(symbol, level_index):
-            continue
-        if current_price <= level_price:
-            grid_positions.open_position(symbol, level_index, level_price, now)
+    previous_price = grid_positions.last_price(symbol)
+    grid_positions.set_last_price(symbol, current_price)
+    if previous_price is not None:
+        touched_low, touched_high = min(previous_price, current_price), max(previous_price, current_price)
+        for level_index, level_price in enumerate(levels):
+            if grid_positions.has_open_position(symbol, level_index):
+                continue
+            if touched_low <= level_price <= touched_high:
+                grid_positions.open_position(symbol, level_index, level_price, now)
 
     last_summary_at = _last_grid_summary_at.get(symbol, 0.0)
     if now - last_summary_at >= config.PERP_GRID_SUMMARY_INTERVAL_SECONDS:
@@ -206,11 +217,20 @@ def _process_grid_symbol_live(symbol: str, tracker: "GridLiveTracker", now: floa
         if reason is not None:
             execute_close(tracker, position, reason, now)
 
+    # _process_grid_symbol(ペーパートレード版)と同じ理由で、前回価格〜今回
+    # 価格の区間にその水準が入っていた場合のみ約定させる(価格が実際に通過
+    # したかどうかを見る)。前回価格が無ければ何も発注しない。
+    previous_price = tracker.last_price(hl_symbol)
+    tracker.set_last_price(hl_symbol, mid_price)
+    if previous_price is None:
+        return
+    touched_low, touched_high = min(previous_price, mid_price), max(previous_price, mid_price)
+
     open_count = len(tracker.open_positions())
     for level_index, level_price in enumerate(levels):
         if tracker.has_open_position(hl_symbol, level_index):
             continue
-        if mid_price > level_price:
+        if not (touched_low <= level_price <= touched_high):
             continue
         should_open, _reason = should_open_live_position(open_count)
         if not should_open:
