@@ -50,6 +50,20 @@ def test_fetch_klines_with_time_returns_none_on_empty_response():
         assert perp_market_data.fetch_klines_with_time("BTCUSDT", "1h", 2) is None
 
 
+def test_fetch_ohlc_with_time_parses_all_fields():
+    klines = [
+        [1000000, "1.0", "1.1", "0.9", "1.05", "100"],
+    ]
+    with patch("urllib.request.urlopen", return_value=_response(klines)):
+        candles = perp_market_data.fetch_ohlc_with_time("BTCUSDT", "1h", 1)
+    assert candles == [(1000.0, 1.0, 1.1, 0.9, 1.05)]
+
+
+def test_fetch_ohlc_with_time_returns_none_on_empty_response():
+    with patch("urllib.request.urlopen", return_value=_response([])):
+        assert perp_market_data.fetch_ohlc_with_time("BTCUSDT", "1h", 2) is None
+
+
 def test_fetch_latest_funding_rate_parses_value():
     with patch("urllib.request.urlopen", return_value=_response([{"fundingRate": "0.0001"}])):
         rate = perp_market_data.fetch_latest_funding_rate("BTCUSDT")

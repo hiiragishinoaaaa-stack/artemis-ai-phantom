@@ -74,6 +74,33 @@ def fetch_klines_with_time(symbol: str, interval: str, limit: int) -> list[tuple
     return result or None
 
 
+def fetch_ohlc_with_time(symbol: str, interval: str, limit: int) -> list[tuple[float, float, float, float, float]] | None:
+    """直近limit本分の(始値時刻[UNIX秒], 始値, 高値, 安値, 終値)を古い順で返す
+    (perp_grid_backtest.py用)。
+
+    グリッドトレードのバックテストは「そのローソク足の間に価格がグリッド
+    水準に触れたか」を高値・安値で判定する必要があるため、終値だけの
+    fetch_closes()/fetch_klines_with_time()では情報が足りない。
+    """
+    data = _get("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": str(limit)})
+    if not isinstance(data, list):
+        return None
+    result = []
+    for candle in data:
+        if not isinstance(candle, list) or len(candle) < 5:
+            continue
+        try:
+            open_time = float(candle[0]) / 1000.0
+            open_price = float(candle[1])
+            high = float(candle[2])
+            low = float(candle[3])
+            close = float(candle[4])
+        except (TypeError, ValueError):
+            continue
+        result.append((open_time, open_price, high, low, close))
+    return result or None
+
+
 def fetch_latest_funding_rate(symbol: str) -> float | None:
     """直近のファンディングレート(小数、例: 0.0001 = 0.01%)を返す(失敗時はNone)。
 
