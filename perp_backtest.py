@@ -50,6 +50,13 @@ class BacktestTrade:
 @dataclass
 class BacktestResult:
     trades: list[BacktestTrade] = field(default_factory=list)
+    # 検証期間の最初から最後まで、シグナルを無視してただロング(買い持ち)
+    # し続けていた場合の値上がり率(%)。戦略の成績がシグナルの予測力による
+    # ものか、単に検証期間中の全体的な値動き(上昇トレンド)に乗っかって
+    # いただけかを見分けるための比較対象(buy_and_hold_leveraged_pnl_pctは
+    # 同じレバレッジをかけた場合の参考値)。
+    buy_and_hold_pnl_pct: float = 0.0
+    buy_and_hold_leveraged_pnl_pct: float = 0.0
 
     @property
     def win_rate(self) -> float:
@@ -107,6 +114,12 @@ def run_backtest(
     warmup = max(ema_long_period, rsi_period + 1)
     if len(candles) <= warmup:
         return result
+
+    start_price = candles[warmup][1]
+    end_price = candles[-1][1]
+    if start_price > 0:
+        result.buy_and_hold_pnl_pct = (end_price - start_price) / start_price * 100
+        result.buy_and_hold_leveraged_pnl_pct = result.buy_and_hold_pnl_pct * leverage
 
     position: dict | None = None
     daily_pnl: dict[str, float] = {}
@@ -179,6 +192,20 @@ def _print_report(result: BacktestResult, symbol: str, leverage: float) -> None:
     for t in result.trades:
         reasons[t.reason] = reasons.get(t.reason, 0) + 1
     print(f"決済理由の内訳: {reasons}")
+
+    print(
+        f"\n--- 比較: シグナルを無視してただ買い持ちしていた場合(Buy & Hold) ---\n"
+        f"レバレッジ無し: {result.buy_and_hold_pnl_pct:+.1f}% / "
+        f"同じ{leverage}倍のレバレッジをかけた場合: {result.buy_and_hold_leveraged_pnl_pct:+.1f}%"
+    )
+    if result.total_pnl_pct <= result.buy_and_hold_leveraged_pnl_pct:
+        print(
+            "→ 戦略の成績がBuy & Holdを上回っていません。シグナルに予測力があるというより、"
+            "検証期間中の全体的な値動き(トレンド)に助けられていただけの可能性が高いです。"
+        )
+    else:
+        print("→ 戦略の成績がBuy & Holdを上回っています(それでもサンプル数・期間が十分かは別途確認すること)。")
+
     print(
         "\n※ 過去データでの結果は将来の成績を保証しません。複数銘柄・複数期間で確認し、"
         "一貫して悪くない結果が出るかを見てから、実資金投入を検討すること。"

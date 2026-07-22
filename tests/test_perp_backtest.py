@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from perp_backtest import BacktestResult, BacktestTrade, run_backtest
+from perp_backtest import BacktestResult, BacktestTrade, _print_report, run_backtest
 
 
 def _candles(prices: list[float], start_time: float = 0.0, step_seconds: float = 3600.0) -> list[tuple[float, float]]:
@@ -124,3 +124,45 @@ def test_backtest_result_max_drawdown():
     )
     # 累積: +10 -> -10 -> -5、ピークは+10なので最大ドローダウンは-20
     assert result.max_drawdown_pct == pytest.approx(-20.0)
+
+
+def test_run_backtest_computes_buy_and_hold_comparison():
+    prices = [100.0 + i for i in range(120)]  # ウォームアップ後も一貫して上昇
+    candles = _candles(prices)
+    result = run_backtest(
+        "BTCUSDT", candles, leverage=3.0, take_profit_pct=10.0, stop_loss_pct=-10.0, max_hold_seconds=86400 * 10
+    )
+    # warmup(50本目、価格150)から最終足(価格219)までの値上がり率
+    expected_raw = (219.0 - 150.0) / 150.0 * 100
+    assert result.buy_and_hold_pnl_pct == pytest.approx(expected_raw)
+    assert result.buy_and_hold_leveraged_pnl_pct == pytest.approx(expected_raw * 3.0)
+
+
+def test_run_backtest_buy_and_hold_zero_when_insufficient_candles():
+    candles = _candles([100.0] * 10)
+    result = run_backtest("BTCUSDT", candles, leverage=3.0, take_profit_pct=10.0, stop_loss_pct=-10.0, max_hold_seconds=86400)
+    assert result.buy_and_hold_pnl_pct == 0.0
+    assert result.buy_and_hold_leveraged_pnl_pct == 0.0
+
+
+def test_print_report_shows_buy_and_hold_comparison(capsys):
+    result = BacktestResult(
+        trades=[BacktestTrade("LONG", 100.0, 110.0, 0.0, 1.0, "take_profit", 10.0)],
+        buy_and_hold_pnl_pct=5.0,
+        buy_and_hold_leveraged_pnl_pct=15.0,
+    )
+    _print_report(result, "BTCUSDT", leverage=3.0)
+    captured = capsys.readouterr()
+    assert "Buy & Hold" in captured.out
+    assert "上回っていません" in captured.out  # 10% <= 15%(レバレッジ込みBuy&Hold)なので
+
+
+def test_print_report_beats_buy_and_hold(capsys):
+    result = BacktestResult(
+        trades=[BacktestTrade("LONG", 100.0, 130.0, 0.0, 1.0, "take_profit", 30.0)],
+        buy_and_hold_pnl_pct=5.0,
+        buy_and_hold_leveraged_pnl_pct=15.0,
+    )
+    _print_report(result, "BTCUSDT", leverage=3.0)
+    captured = capsys.readouterr()
+    assert "上回っています" in captured.out
