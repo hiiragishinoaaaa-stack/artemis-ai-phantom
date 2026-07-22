@@ -42,11 +42,35 @@ def decide_grid_exit_reason(
     return None
 
 
-def compute_grid_pnl_pct(entry_price: float, exit_price: float, leverage: float, fee_pct_per_side: float = 0.0) -> float:
+def compute_grid_pnl_pct(
+    entry_price: float,
+    exit_price: float,
+    leverage: float,
+    fee_pct_per_side: float = 0.0,
+    funding_cost_pct: float = 0.0,
+) -> float:
     """1回のグリッド往復(買い→売り)の損益率(%)。レバレッジ適用後、
-    往復手数料(fee_pct_per_side×2×leverage)を差し引く。
+    往復手数料(fee_pct_per_side×2×leverage)と、保有中に発生したファンディング
+    コスト(funding_cost_pct、既定0。funding_cost_pct()で計算した値をそのまま
+    渡す想定)を差し引く。
     """
     if entry_price <= 0:
         return 0.0
     raw_pct = (exit_price - entry_price) / entry_price * 100
-    return raw_pct * leverage - 2 * fee_pct_per_side * leverage
+    return raw_pct * leverage - 2 * fee_pct_per_side * leverage - funding_cost_pct
+
+
+def funding_cost_pct(funding_rate_history: list[tuple[float, float]], opened_at: float, closed_at: float, leverage: float) -> float:
+    """建玉を保有していた間(opened_at <= ファンディング発生時刻 < closed_at)
+    に発生したファンディングコストの合計(レバレッジ込み、%)を返す。
+
+    買い(ロング)専用のグリッド戦略なので、正のレート(ロングがショートへ
+    支払う)はコスト、負のレートは収益として、そのまま符号付きで合算する。
+    perp_grid_backtest.py(過去データを一括処理、bisectで高速化)と
+    grid_paper_trader.py/grid_live_trader.py(1建玉ごとに都度APIから取得)の
+    両方から使う共通関数。
+    """
+    if not funding_rate_history:
+        return 0.0
+    total_rate = sum(rate for t, rate in funding_rate_history if opened_at <= t < closed_at)
+    return total_rate * 100 * leverage

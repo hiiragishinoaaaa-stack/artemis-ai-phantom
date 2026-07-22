@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 
 import config
+import grid_trading
 
 logger = logging.getLogger("phantom_sniper")
 
@@ -155,6 +156,30 @@ def fetch_funding_rate_history(symbol: str, start_time_ms: int, end_time_ms: int
             break
         cursor = int(all_entries[-1][0] * 1000) + 1
     return all_entries or None
+
+
+def estimate_funding_cost_pct(symbol: str, opened_at: float, closed_at: float, leverage: float) -> float:
+    """建玉を保有していた期間のファンディングコスト(レバレッジ込み、%)を
+    実データから推定する(grid_paper_trader.py/grid_live_trader.pyの決済時に
+    都度呼び出す想定)。
+
+    Binanceのファンディングは8時間ごと、Hyperliquid本番は1時間ごとで間隔が
+    異なるため(fetch_funding_rate_historyのdocstring参照)、グリッドは
+    数分〜数十分で決済されることが多く、その場合は保有期間中に8時間区切りの
+    イベントを1件も含まないため0.0になりやすい(過小評価になる可能性が
+    ある点に注意。逆に、価格がレンジ外に張り付いて長時間「握り込み」に
+    なった建玉ほど、この推定はより正確に効いてくる)。
+
+    履歴の取得に失敗した場合は0.0を返す(コスト計算自体をスキップしない、
+    という設計。取得できないからといって決済処理を止めるべきではないため)。
+    """
+    history = fetch_funding_rate_history(symbol, int(opened_at * 1000), int(closed_at * 1000))
+    if history is None:
+        logger.warning(
+            "perp_market_data: %sのファンディングコスト推定に失敗しました(履歴取得不可、0として扱います)", symbol
+        )
+        return 0.0
+    return grid_trading.funding_cost_pct(history, opened_at, closed_at, leverage)
 
 
 def fetch_mark_price(symbol: str) -> float | None:

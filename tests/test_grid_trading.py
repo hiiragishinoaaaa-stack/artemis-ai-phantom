@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from grid_trading import compute_grid_levels, compute_grid_pnl_pct, decide_grid_exit_reason
+from grid_trading import compute_grid_levels, compute_grid_pnl_pct, decide_grid_exit_reason, funding_cost_pct
 
 
 def test_compute_grid_levels_basic():
@@ -48,3 +48,21 @@ def test_compute_grid_pnl_pct_with_fee():
 
 def test_compute_grid_pnl_pct_zero_when_entry_price_zero():
     assert compute_grid_pnl_pct(0.0, 101.0, leverage=3.0) == 0.0
+
+
+def test_compute_grid_pnl_pct_deducts_funding_cost():
+    assert compute_grid_pnl_pct(100.0, 101.0, leverage=3.0, funding_cost_pct=0.5) == pytest.approx(2.5)
+
+
+def test_funding_cost_pct_sums_rates_within_holding_window():
+    history = [(0.5, 0.0001), (1.5, 0.0005), (2.5, 0.0002)]  # 2件目・3件目は保有期間後なので除外
+    assert funding_cost_pct(history, opened_at=0.0, closed_at=1.0, leverage=3.0) == pytest.approx(0.0001 * 100 * 3.0)
+
+
+def test_funding_cost_pct_negative_rate_is_a_gain():
+    history = [(0.5, -0.0002)]
+    assert funding_cost_pct(history, opened_at=0.0, closed_at=1.0, leverage=3.0) == pytest.approx(-0.0002 * 100 * 3.0)
+
+
+def test_funding_cost_pct_empty_history_is_zero():
+    assert funding_cost_pct([], opened_at=0.0, closed_at=1.0, leverage=3.0) == 0.0

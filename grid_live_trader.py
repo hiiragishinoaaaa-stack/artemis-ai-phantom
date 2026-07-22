@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 import config
 import hyperliquid_client
 import hyperliquid_wallet
+import perp_market_data
 import perp_notifier
 from grid_trading import compute_grid_pnl_pct
 
@@ -219,7 +220,16 @@ class GridLiveTracker:
         position.pending_close_reason = ""
         self._save()
 
-    def record_close(self, position: GridLivePosition, exit_price: float, reason: str, now: float, leverage: float, fee_pct_per_side: float) -> None:
+    def record_close(
+        self,
+        position: GridLivePosition,
+        exit_price: float,
+        reason: str,
+        now: float,
+        leverage: float,
+        fee_pct_per_side: float,
+        funding_cost_pct: float = 0.0,
+    ) -> None:
         """決済(成行の損切り、または指値利確の約定確認)が完了した後に、
         その結果を反映する。
         """
@@ -230,7 +240,9 @@ class GridLiveTracker:
         position.close_reason = reason
         position.exit_price = exit_price
         position.closed_at = now
-        position.pnl_pct = round(compute_grid_pnl_pct(position.entry_price, exit_price, leverage, fee_pct_per_side), 4)
+        position.pnl_pct = round(
+            compute_grid_pnl_pct(position.entry_price, exit_price, leverage, fee_pct_per_side, funding_cost_pct), 4
+        )
         self._save()
 
     def _load(self) -> None:
@@ -349,7 +361,12 @@ def execute_close(tracker: GridLiveTracker, position: GridLivePosition, reason: 
             perp_notifier.notify_grid_live_failure(position.symbol, position.level_index, "決済(損切り)", result.error)
             return False
         exit_price = result.avg_price or position.entry_price
-        tracker.record_close(position, exit_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_LIVE_FEE_PCT_PER_SIDE)
+        funding_cost_pct = perp_market_data.estimate_funding_cost_pct(
+            position.symbol, position.opened_at, now, config.PERP_GRID_LEVERAGE
+        )
+        tracker.record_close(
+            position, exit_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_LIVE_FEE_PCT_PER_SIDE, funding_cost_pct
+        )
         perp_notifier.notify_grid_live_closed(position.symbol, position.level_index, reason, position.pnl_pct, position.entry_price, exit_price)
         logger.info("grid_live_trader: 決済(損切り)が成功しました symbol=%s level=%s pnl_pct=%s", position.symbol, position.level_index, position.pnl_pct)
         return True
@@ -367,7 +384,12 @@ def execute_close(tracker: GridLiveTracker, position: GridLivePosition, reason: 
 
     if result.filled:
         exit_price = result.avg_price or tp_price
-        tracker.record_close(position, exit_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_LIVE_FEE_PCT_PER_SIDE)
+        funding_cost_pct = perp_market_data.estimate_funding_cost_pct(
+            position.symbol, position.opened_at, now, config.PERP_GRID_LEVERAGE
+        )
+        tracker.record_close(
+            position, exit_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_LIVE_FEE_PCT_PER_SIDE, funding_cost_pct
+        )
         perp_notifier.notify_grid_live_closed(position.symbol, position.level_index, reason, position.pnl_pct, position.entry_price, exit_price)
         return True
 
@@ -387,7 +409,12 @@ def check_pending_closes(tracker: GridLiveTracker, now: float) -> None:
             tp_price = position.entry_price * (1 + config.PERP_GRID_TAKE_PROFIT_PCT / 100)
             exit_price = status.avg_price or tp_price
             reason = position.pending_close_reason or "take_profit"
-            tracker.record_close(position, exit_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_LIVE_FEE_PCT_PER_SIDE)
+            funding_cost_pct = perp_market_data.estimate_funding_cost_pct(
+                position.symbol, position.opened_at, now, config.PERP_GRID_LEVERAGE
+            )
+            tracker.record_close(
+                position, exit_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_LIVE_FEE_PCT_PER_SIDE, funding_cost_pct
+            )
             logger.info("grid_live_trader: 利確指値が約定しました symbol=%s level=%s pnl_pct=%s", position.symbol, position.level_index, position.pnl_pct)
             perp_notifier.notify_grid_live_closed(position.symbol, position.level_index, reason, position.pnl_pct, position.entry_price, exit_price)
         elif not status.is_open:

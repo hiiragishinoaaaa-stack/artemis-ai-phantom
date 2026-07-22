@@ -52,6 +52,17 @@ def test_close_position_computes_pnl_with_fee():
     assert tracker.has_open_position("BTCUSDT", 3) is False
 
 
+def test_close_position_deducts_funding_cost():
+    tracker = GridPaperTracker()
+    position = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1000.0)
+    tracker.close_position(
+        position, exit_price=101.0, reason="take_profit", now=1010.0, leverage=3.0, fee_pct_per_side=0.0,
+        funding_cost_pct=0.5,
+    )
+    # 1%値上がり * 3倍 - ファンディング0.5 = 3.0 - 0.5 = 2.5
+    assert position.pnl_pct == pytest.approx(2.5)
+
+
 def test_all_positions_includes_closed():
     tracker = GridPaperTracker()
     position = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1000.0)

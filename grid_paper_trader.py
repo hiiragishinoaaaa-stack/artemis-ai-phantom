@@ -88,14 +88,21 @@ class GridPaperTracker:
         return position
 
     def close_position(
-        self, position: GridPosition, exit_price: float, reason: str, now: float, leverage: float, fee_pct_per_side: float
+        self,
+        position: GridPosition,
+        exit_price: float,
+        reason: str,
+        now: float,
+        leverage: float,
+        fee_pct_per_side: float,
+        funding_cost_pct: float = 0.0,
     ) -> None:
         position.closed = True
         position.close_reason = reason
         position.exit_price = exit_price
         position.closed_at = now
         position.pnl_pct = round(
-            compute_grid_pnl_pct(position.entry_price, exit_price, leverage, fee_pct_per_side), 4
+            compute_grid_pnl_pct(position.entry_price, exit_price, leverage, fee_pct_per_side, funding_cost_pct), 4
         )
         self._save()
 

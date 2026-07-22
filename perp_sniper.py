@@ -147,8 +147,17 @@ def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: flo
             position.entry_price, current_price, config.PERP_GRID_TAKE_PROFIT_PCT, config.PERP_GRID_STOP_LOSS_PCT
         )
         if reason is not None:
+            funding_cost_pct = perp_market_data.estimate_funding_cost_pct(
+                symbol, position.opened_at, now, config.PERP_GRID_LEVERAGE
+            )
             grid_positions.close_position(
-                position, current_price, reason, now, config.PERP_GRID_LEVERAGE, config.PERP_GRID_FEE_PCT_PER_SIDE
+                position,
+                current_price,
+                reason,
+                now,
+                config.PERP_GRID_LEVERAGE,
+                config.PERP_GRID_FEE_PCT_PER_SIDE,
+                funding_cost_pct,
             )
 
     previous_price = grid_positions.last_price(symbol)

@@ -270,11 +270,28 @@ def test_execute_close_take_profit_closes_immediately_when_filled():
     tracker = GridLiveTracker()
     position = tracker.record_open("BTC", level_index=3, entry_price=100.0, size=0.001, avg_price=100.0, now=1000.0)
     result = PostOnlyResult(success=True, filled=True, avg_price=100.2, filled_size=0.001)
-    with patch("grid_live_trader.hyperliquid_client.place_post_only_sell", return_value=result):
+    with (
+        patch("grid_live_trader.hyperliquid_client.place_post_only_sell", return_value=result),
+        patch("grid_live_trader.perp_market_data.estimate_funding_cost_pct", return_value=0.0),
+    ):
         success = execute_close(tracker, position, "take_profit", now=1010.0)
     assert success is True
     assert position.closed is True
     assert position.exit_price == 100.2
+
+
+def test_execute_close_take_profit_deducts_estimated_funding_cost():
+    tracker = GridLiveTracker()
+    position = tracker.record_open("BTC", level_index=3, entry_price=100.0, size=0.001, avg_price=100.0, now=1000.0)
+    result = PostOnlyResult(success=True, filled=True, avg_price=100.2, filled_size=0.001)
+    with (
+        patch("grid_live_trader.hyperliquid_client.place_post_only_sell", return_value=result),
+        patch("grid_live_trader.perp_market_data.estimate_funding_cost_pct", return_value=0.05) as mock_estimate,
+    ):
+        execute_close(tracker, position, "take_profit", now=1010.0)
+    mock_estimate.assert_called_once_with("BTC", 1000.0, 1010.0, config.PERP_GRID_LEVERAGE)
+    # 0.2%利確 * レバレッジ3倍 - 往復手数料(0.015%*2*3倍) - ファンディング0.05
+    assert position.pnl_pct == pytest.approx(0.2 * 3.0 - 2 * 0.015 * 3.0 - 0.05)
 
 
 def test_execute_close_take_profit_skips_when_already_pending_close():
@@ -291,7 +308,10 @@ def test_execute_close_stop_loss_uses_market_order():
     tracker = GridLiveTracker()
     position = tracker.record_open("BTC", level_index=3, entry_price=100.0, size=0.001, avg_price=100.0, now=1000.0)
     result = OrderResult(success=True, avg_price=99.5, filled_size=0.001)
-    with patch("grid_live_trader.hyperliquid_client.close_long", return_value=result):
+    with (
+        patch("grid_live_trader.hyperliquid_client.close_long", return_value=result),
+        patch("grid_live_trader.perp_market_data.estimate_funding_cost_pct", return_value=0.0),
+    ):
         success = execute_close(tracker, position, "stop_loss", now=1010.0)
     assert success is True
     assert position.closed is True
@@ -304,8 +324,10 @@ def test_execute_close_stop_loss_cancels_pending_take_profit_first():
     tracker.record_pending_close(position, oid=7, reason="take_profit", now=1005.0)
 
     result = OrderResult(success=True, avg_price=99.0, filled_size=0.001)
-    with patch("grid_live_trader.hyperliquid_client.cancel_order", return_value=True) as mock_cancel, patch(
-        "grid_live_trader.hyperliquid_client.close_long", return_value=result
+    with (
+        patch("grid_live_trader.hyperliquid_client.cancel_order", return_value=True) as mock_cancel,
+        patch("grid_live_trader.hyperliquid_client.close_long", return_value=result),
+        patch("grid_live_trader.perp_market_data.estimate_funding_cost_pct", return_value=0.0),
     ):
         success = execute_close(tracker, position, "stop_loss", now=1010.0)
     assert success is True
@@ -334,11 +356,29 @@ def test_check_pending_closes_confirms_fill():
     tracker.record_pending_close(position, oid=7, reason="take_profit", now=1005.0)
 
     status = OrderStatusResult(found=True, is_filled=True, avg_price=100.2, filled_size=0.001)
-    with patch("grid_live_trader.hyperliquid_client.query_order_status", return_value=status):
+    with (
+        patch("grid_live_trader.hyperliquid_client.query_order_status", return_value=status),
+        patch("grid_live_trader.perp_market_data.estimate_funding_cost_pct", return_value=0.0),
+    ):
         check_pending_closes(tracker, now=1010.0)
     assert position.closed is True
     assert position.exit_price == 100.2
     assert position.close_reason == "take_profit"
+
+
+def test_check_pending_closes_confirms_fill_deducts_estimated_funding_cost():
+    tracker = GridLiveTracker()
+    position = tracker.record_open("BTC", level_index=3, entry_price=100.0, size=0.001, avg_price=100.0, now=1000.0)
+    tracker.record_pending_close(position, oid=7, reason="take_profit", now=1005.0)
+
+    status = OrderStatusResult(found=True, is_filled=True, avg_price=100.2, filled_size=0.001)
+    with (
+        patch("grid_live_trader.hyperliquid_client.query_order_status", return_value=status),
+        patch("grid_live_trader.perp_market_data.estimate_funding_cost_pct", return_value=0.05) as mock_estimate,
+    ):
+        check_pending_closes(tracker, now=1010.0)
+    mock_estimate.assert_called_once_with("BTC", 1000.0, 1010.0, config.PERP_GRID_LEVERAGE)
+    assert position.pnl_pct == pytest.approx(0.2 * 3.0 - 2 * 0.015 * 3.0 - 0.05)
 
 
 def test_check_pending_closes_reverts_to_open_when_canceled():

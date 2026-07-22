@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import perp_market_data
 
 
@@ -104,6 +106,19 @@ def test_fetch_funding_rate_history_returns_none_on_empty_response():
 def test_fetch_funding_rate_history_returns_none_on_non_list_response():
     with patch("urllib.request.urlopen", return_value=_response({"error": "bad symbol"})):
         assert perp_market_data.fetch_funding_rate_history("BTCUSDT", 0, 2_000_000_000) is None
+
+
+def test_estimate_funding_cost_pct_sums_rates_within_window():
+    entries = [{"fundingTime": 500000, "fundingRate": "0.0001"}]
+    with patch("urllib.request.urlopen", return_value=_response(entries)):
+        cost = perp_market_data.estimate_funding_cost_pct("BTCUSDT", opened_at=0.0, closed_at=1000.0, leverage=3.0)
+    assert cost == pytest.approx(0.0001 * 100 * 3.0)
+
+
+def test_estimate_funding_cost_pct_returns_zero_on_fetch_failure():
+    with patch("urllib.request.urlopen", side_effect=OSError("network down")):
+        cost = perp_market_data.estimate_funding_cost_pct("BTCUSDT", opened_at=0.0, closed_at=1000.0, leverage=3.0)
+    assert cost == 0.0
 
 
 def test_fetch_funding_rate_history_paginates_when_page_is_full():

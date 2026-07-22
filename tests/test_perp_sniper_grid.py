@@ -64,3 +64,26 @@ def test_no_movement_opens_nothing_on_second_poll():
     with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.0):
         perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1010.0)
     assert tracker.open_positions("BTCUSDT") == []
+
+
+def test_process_grid_symbol_close_deducts_estimated_funding_cost():
+    """決済時、その建玉の保有期間について実際のファンディングレート履歴を
+    取得し、コストとしてpnl_pctから差し引くこと(perp_market_data.
+    estimate_funding_cost_ptcが正しい引数で呼ばれ、その戻り値が反映される)。
+    """
+    tracker = GridPaperTracker()
+    tracker.get_or_init_levels("BTCUSDT", 100.0, config.PERP_GRID_RANGE_PCT, config.PERP_GRID_COUNT)
+    tracker.set_last_price("BTCUSDT", 100.0)
+    tracker.open_position("BTCUSDT", level_index=0, entry_price=100.0, now=1000.0)
+
+    with (
+        patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.3),
+        patch("perp_sniper.perp_market_data.estimate_funding_cost_pct", return_value=0.05) as mock_estimate,
+    ):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=2000.0)
+
+    mock_estimate.assert_called_once_with("BTCUSDT", 1000.0, 2000.0, config.PERP_GRID_LEVERAGE)
+    closed = [p for p in tracker.all_positions("BTCUSDT") if p.closed]
+    assert len(closed) == 1
+    # 利確0.3% * レバレッジ3倍 - ファンディング0.05 = 0.9 - 0.05 = 0.85
+    assert closed[0].pnl_pct == pytest.approx(0.85)
