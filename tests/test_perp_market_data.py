@@ -84,3 +84,38 @@ def test_fetch_mark_price_parses_value():
 def test_fetch_mark_price_returns_none_on_malformed_response():
     with patch("urllib.request.urlopen", return_value=_response({"unexpected": True})):
         assert perp_market_data.fetch_mark_price("BTCUSDT") is None
+
+
+def test_fetch_funding_rate_history_parses_time_and_rate():
+    entries = [
+        {"fundingTime": 1000000, "fundingRate": "0.0001"},
+        {"fundingTime": 1028800000, "fundingRate": "-0.0002"},
+    ]
+    with patch("urllib.request.urlopen", return_value=_response(entries)):
+        history = perp_market_data.fetch_funding_rate_history("BTCUSDT", 0, 2_000_000_000)
+    assert history == [(1000.0, 0.0001), (1028800.0, -0.0002)]
+
+
+def test_fetch_funding_rate_history_returns_none_on_empty_response():
+    with patch("urllib.request.urlopen", return_value=_response([])):
+        assert perp_market_data.fetch_funding_rate_history("BTCUSDT", 0, 2_000_000_000) is None
+
+
+def test_fetch_funding_rate_history_returns_none_on_non_list_response():
+    with patch("urllib.request.urlopen", return_value=_response({"error": "bad symbol"})):
+        assert perp_market_data.fetch_funding_rate_history("BTCUSDT", 0, 2_000_000_000) is None
+
+
+def test_fetch_funding_rate_history_paginates_when_page_is_full():
+    # 1ページ目がちょうど1000件(=まだ続きがある可能性)、2ページ目は2件で終わる
+    first_page = [{"fundingTime": i * 1000, "fundingRate": "0.0001"} for i in range(1000)]
+    second_page = [
+        {"fundingTime": 1000000, "fundingRate": "0.0002"},
+        {"fundingTime": 1001000, "fundingRate": "0.0003"},
+    ]
+    with patch("urllib.request.urlopen", side_effect=[_response(first_page), _response(second_page)]) as mock_urlopen:
+        history = perp_market_data.fetch_funding_rate_history("BTCUSDT", 0, 2_000_000_000)
+    assert history is not None
+    assert len(history) == 1002
+    assert history[-1] == (1001.0, 0.0003)
+    assert mock_urlopen.call_count == 2

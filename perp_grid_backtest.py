@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -63,6 +64,8 @@ class GridBacktestResult:
     still_open_count: int = 0
     buy_and_hold_pnl_pct: float = 0.0
     buy_and_hold_leveraged_pnl_pct: float = 0.0
+    funding_included: bool = False
+    total_funding_cost_pct: float = 0.0
 
     @property
     def win_rate(self) -> float:
@@ -96,6 +99,24 @@ def _day_key(unix_seconds: float) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(unix_seconds))
 
 
+def _funding_cost_pct(
+    funding_times: list[float], funding_rates: list[float], opened_at: float, closed_at: float, leverage: float
+) -> float:
+    """建玉を保有していた間(opened_at <= ファンディング発生時刻 < closed_at)
+    に発生したファンディングコストの合計(レバレッジ込み、%)を返す。
+
+    買い(ロング)専用のグリッド戦略なので、正のレート(ロングがショートへ
+    支払う)はコスト、負のレートは収益として、そのまま符号付きで合算する
+    (funding_timesは古い順にソート済みという前提。run_grid_backtest内で
+    perp_market_data.fetch_funding_rate_historyの戻り値をそのまま使う)。
+    """
+    if not funding_times:
+        return 0.0
+    start_idx = bisect.bisect_left(funding_times, opened_at)
+    end_idx = bisect.bisect_left(funding_times, closed_at)
+    return sum(funding_rates[start_idx:end_idx]) * 100 * leverage
+
+
 def run_grid_backtest(
     candles: list[tuple[float, float, float, float, float]],
     range_pct: float,
@@ -105,6 +126,7 @@ def run_grid_backtest(
     leverage: float,
     daily_loss_limit_pct: float | None = None,
     fee_pct_per_side: float = 0.0,
+    funding_rate_history: list[tuple[float, float]] | None = None,
 ) -> GridBacktestResult:
     """candles((時刻, 始値, 高値, 安値, 終値)のペア、古い順)に対して
     買いグリッド戦略を機械的に適用する(純粋関数、ネットワーク非依存)。
@@ -119,6 +141,12 @@ def run_grid_backtest(
     差し引く(グリッドトレードは取引回数が非常に多くなりやすく、手数料が
     利益を大きく削る可能性がある。参考にしたgrid trading記事でも
     「週の手数料だけで数千USD、結果はトントン」と報告されている)。
+
+    funding_rate_history(既定None=含めない)を渡すと、レバレッジを
+    かけたロング建玉を保有している間に発生するファンディング費用も
+    pnl_pctから差し引く(perp_market_data.fetch_funding_rate_history参照。
+    これまでのバックテスト・ペーパートレード・実発注のいずれの損益計算にも
+    含まれていなかった隠れコスト)。
     """
     result = GridBacktestResult()
     if not candles or grid_count <= 0:
@@ -134,6 +162,10 @@ def run_grid_backtest(
     result.upper_bound = levels[-1]
     step = (result.upper_bound - result.lower_bound) / grid_count
     result.grid_step_pct = step / center_price * 100 if center_price else 0.0
+    result.funding_included = funding_rate_history is not None
+
+    funding_times = [t for t, _ in funding_rate_history] if funding_rate_history else []
+    funding_rates = [r for _, r in funding_rate_history] if funding_rate_history else []
 
     open_positions: dict[int, dict] = {}
     daily_pnl: dict[str, float] = {}
@@ -148,14 +180,18 @@ def run_grid_backtest(
             tp_price = entry * (1 + take_profit_pct / 100)
             sl_price = entry * (1 + stop_loss_pct / 100)  # stop_loss_pctはマイナス値
             if high >= tp_price:
-                pnl_pct = take_profit_pct * leverage - round_trip_fee_pct
+                funding_cost = _funding_cost_pct(funding_times, funding_rates, pos["opened_at"], now, leverage)
+                pnl_pct = take_profit_pct * leverage - round_trip_fee_pct - funding_cost
                 result.trades.append(GridTrade(entry, tp_price, pos["opened_at"], now, "take_profit", pnl_pct))
                 daily_pnl[day_key] = daily_pnl.get(day_key, 0.0) + pnl_pct
+                result.total_funding_cost_pct += funding_cost
                 del open_positions[level_index]
             elif low <= sl_price:
-                pnl_pct = stop_loss_pct * leverage - round_trip_fee_pct
+                funding_cost = _funding_cost_pct(funding_times, funding_rates, pos["opened_at"], now, leverage)
+                pnl_pct = stop_loss_pct * leverage - round_trip_fee_pct - funding_cost
                 result.trades.append(GridTrade(entry, sl_price, pos["opened_at"], now, "stop_loss", pnl_pct))
                 daily_pnl[day_key] = daily_pnl.get(day_key, 0.0) + pnl_pct
+                result.total_funding_cost_pct += funding_cost
                 del open_positions[level_index]
 
         if daily_loss_limit_pct is not None and daily_pnl.get(day_key, 0.0) <= daily_loss_limit_pct:
@@ -180,7 +216,8 @@ def run_grid_backtest(
 
 def _print_report(result: GridBacktestResult, symbol: str, leverage: float, fee_pct_per_side: float = 0.0) -> None:
     fee_note = f"、片道手数料{fee_pct_per_side:.3f}%考慮済み" if fee_pct_per_side else "、手数料は未考慮(0%)"
-    print(f"=== {symbol} グリッドトレード バックテスト結果(レバレッジ{leverage}倍{fee_note}) ===")
+    funding_note = "、ファンディングコスト考慮済み" if result.funding_included else "、ファンディングコストは未考慮"
+    print(f"=== {symbol} グリッドトレード バックテスト結果(レバレッジ{leverage}倍{fee_note}{funding_note}) ===")
     print(
         f"レンジ: ${result.lower_bound:,.2f} 〜 ${result.upper_bound:,.2f} "
         f"(中心${result.center_price:,.2f}、グリッド間隔約{result.grid_step_pct:.2f}%)"
@@ -197,6 +234,8 @@ def _print_report(result: GridBacktestResult, symbol: str, leverage: float, fee_
     print(f"合計損益(単純合計、複利無し・毎回同サイズ賭けた場合の目安): {result.total_pnl_pct:+.1f}%")
     print(f"平均損益/取引: {statistics.fmean(t.pnl_pct for t in result.trades):+.3f}%")
     print(f"最大ドローダウン: {result.max_drawdown_pct:.1f}%")
+    if result.funding_included:
+        print(f"うちファンディングコストの合計: {result.total_funding_cost_pct:+.2f}%(正=支払い超過、負=受取り超過)")
 
     print(
         f"\n--- 比較: シグナルを無視してただ買い持ちしていた場合(Buy & Hold) ---\n"
@@ -234,12 +273,27 @@ def main() -> None:
         help="片道の取引手数料率(%%、既定0=手数料なし)。例: Maker手数料0.02%%相当なら0.02を指定。"
         "往復で2倍×レバレッジ分がpnlから差し引かれる",
     )
+    parser.add_argument(
+        "--include-funding",
+        action="store_true",
+        help="Binance Futuresの過去ファンディングレート履歴を取得し、建玉を保有していた間に発生した"
+        "分をコストとしてpnlから差し引く(既定: 含めない)。レバレッジをかけたロング建玉には"
+        "本来これまでのバックテストで計算に入れていなかった追加コストがかかる点を確認するためのオプション。",
+    )
     args = parser.parse_args()
 
     candles = perp_market_data.fetch_ohlc_with_time(args.symbol, args.interval, args.limit)
     if candles is None:
         print("価格データの取得に失敗しました(ネットワーク/シンボル名を確認してください)。")
         return
+
+    funding_rate_history = None
+    if args.include_funding:
+        start_ms = int(candles[0][0] * 1000)
+        end_ms = int(candles[-1][0] * 1000)
+        funding_rate_history = perp_market_data.fetch_funding_rate_history(args.symbol, start_ms, end_ms)
+        if funding_rate_history is None:
+            print("ファンディングレート履歴の取得に失敗しました。ファンディングコストを含めずに続行します。")
 
     result = run_grid_backtest(
         candles,
@@ -250,6 +304,7 @@ def main() -> None:
         args.leverage,
         daily_loss_limit_pct=args.daily_loss_limit,
         fee_pct_per_side=args.fee_pct_per_side,
+        funding_rate_history=funding_rate_history,
     )
     _print_report(result, args.symbol, args.leverage, args.fee_pct_per_side)
 

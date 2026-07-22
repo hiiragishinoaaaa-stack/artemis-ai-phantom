@@ -119,6 +119,44 @@ def fetch_latest_funding_rate(symbol: str) -> float | None:
         return None
 
 
+def fetch_funding_rate_history(symbol: str, start_time_ms: int, end_time_ms: int) -> list[tuple[float, float]] | None:
+    """指定期間のファンディングレート履歴を(発生時刻[UNIX秒], レート)の
+    ペアで古い順に返す(perp_grid_backtest.pyのファンディングコスト
+    計算用、失敗時はNone)。Binanceは8時間ごとに発生する
+    (Hyperliquid本番は1時間ごとで間隔が異なるが、過去データが取れる
+    Binanceを参考値として使う。fetch_ohlc_with_time等、他の関数と
+    同じ方針)。
+
+    Binance APIは1回のリクエストで最大1000件までしか返さないため、
+    範囲が広い場合はページネーション(前回の最後の時刻の直後から
+    再取得)する。
+    """
+    all_entries: list[tuple[float, float]] = []
+    cursor = start_time_ms
+    while cursor <= end_time_ms:
+        data = _get(
+            "/fapi/v1/fundingRate",
+            {"symbol": symbol, "startTime": str(cursor), "endTime": str(end_time_ms), "limit": "1000"},
+        )
+        if not isinstance(data, list):
+            return all_entries or None
+        if not data:
+            break
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                funding_time = float(entry["fundingTime"]) / 1000.0
+                funding_rate = float(entry["fundingRate"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            all_entries.append((funding_time, funding_rate))
+        if len(data) < 1000:
+            break
+        cursor = int(all_entries[-1][0] * 1000) + 1
+    return all_entries or None
+
+
 def fetch_mark_price(symbol: str) -> float | None:
     """現在のマーク価格(USDT建て)を返す(失敗時はNone)。"""
     data = _get("/fapi/v1/premiumIndex", {"symbol": symbol})

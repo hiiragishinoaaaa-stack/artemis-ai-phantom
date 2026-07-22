@@ -85,6 +85,53 @@ def test_run_grid_backtest_zero_fee_matches_default_behavior():
     assert with_zero_fee.trades[0].pnl_pct == without_fee_arg.trades[0].pnl_pct
 
 
+def test_run_grid_backtest_deducts_funding_cost_during_holding_period():
+    candles = [
+        _candle(0, 100, 100, 100, 100),
+        # 高値は101.9(次のグリッド水準102には触れない。触れると別建玉が
+        # 追加で開いてしまい、後段のtotal_funding_cost_ptcのアサーションが
+        # 汚染されるため)。ここでTP約定(保有期間は時刻0〜1)。
+        _candle(1, 100, 101.9, 100, 101),
+        _candle(2, 100, 100, 100, 100),
+    ]
+    # 保有期間中(0以上1未満)に1件、保有期間後(1以上)に1件。後者は含めないこと。
+    funding_rate_history = [(0.5, 0.0001), (1.5, 0.0005)]
+    result = run_grid_backtest(
+        candles, range_pct=10.0, grid_count=10, take_profit_pct=1.0, stop_loss_pct=-0.5, leverage=3.0,
+        funding_rate_history=funding_rate_history,
+    )
+    take_profits = [t for t in result.trades if t.reason == "take_profit"]
+    assert len(take_profits) >= 1
+    # 利確1.0%*3倍 - ファンディング(0.0001*100*3倍) = 3.0 - 0.03 = 2.97
+    assert take_profits[0].pnl_pct == pytest.approx(1.0 * 3.0 - 0.0001 * 100 * 3.0)
+    assert result.funding_included is True
+    assert result.total_funding_cost_pct == pytest.approx(0.0001 * 100 * 3.0)
+
+
+def test_run_grid_backtest_negative_funding_rate_is_a_gain():
+    candles = [
+        _candle(0, 100, 100, 100, 100),
+        _candle(1, 100, 102, 100, 101),
+    ]
+    funding_rate_history = [(0.5, -0.0002)]
+    result = run_grid_backtest(
+        candles, range_pct=10.0, grid_count=10, take_profit_pct=1.0, stop_loss_pct=-0.5, leverage=3.0,
+        funding_rate_history=funding_rate_history,
+    )
+    take_profits = [t for t in result.trades if t.reason == "take_profit"]
+    assert take_profits[0].pnl_pct == pytest.approx(1.0 * 3.0 - (-0.0002) * 100 * 3.0)
+    assert take_profits[0].pnl_pct > 1.0 * 3.0  # マイナスのファンディングレートは受取り(得)になる
+
+
+def test_run_grid_backtest_no_funding_history_matches_default_behavior():
+    candles = [_candle(0, 100, 100, 100, 100), _candle(1, 100, 102, 100, 101)]
+    without_funding = run_grid_backtest(
+        candles, range_pct=10.0, grid_count=10, take_profit_pct=1.0, stop_loss_pct=-0.5, leverage=3.0
+    )
+    assert without_funding.funding_included is False
+    assert without_funding.total_funding_cost_pct == 0.0
+
+
 def test_run_grid_backtest_win_rate_and_total_pnl():
     result = GridBacktestResult(
         trades=[
@@ -172,3 +219,22 @@ def test_print_report_notes_no_fee_by_default(capsys):
     _print_report(result, "BTCUSDT", leverage=3.0)
     captured = capsys.readouterr()
     assert "手数料は未考慮" in captured.out
+
+
+def test_print_report_notes_funding_included(capsys):
+    result = GridBacktestResult(
+        trades=[GridTrade(100.0, 101.0, 0.0, 1.0, "take_profit", 2.97)],
+        funding_included=True,
+        total_funding_cost_pct=0.03,
+    )
+    _print_report(result, "BTCUSDT", leverage=3.0)
+    captured = capsys.readouterr()
+    assert "ファンディングコスト考慮済み" in captured.out
+    assert "うちファンディングコストの合計: +0.03%" in captured.out
+
+
+def test_print_report_notes_no_funding_by_default(capsys):
+    result = GridBacktestResult(trades=[GridTrade(100.0, 101.0, 0.0, 1.0, "take_profit", 3.0)])
+    _print_report(result, "BTCUSDT", leverage=3.0)
+    captured = capsys.readouterr()
+    assert "ファンディングコストは未考慮" in captured.out
