@@ -290,12 +290,16 @@ HYPERLIQUID_USE_TESTNET = _env_bool("HYPERLIQUID_USE_TESTNET", True)
 PERP_GRID_LIVE_ORDER_USD = _env_float("PERP_GRID_LIVE_ORDER_USD", 10.0)
 # 同時に保有できるグリッド建玉数の上限(全資金を一度に晒さないため)。
 PERP_GRID_LIVE_MAX_OPEN_POSITIONS = _env_int("PERP_GRID_LIVE_MAX_OPEN_POSITIONS", 5)
-# 成行注文(market_open/market_close)のスリッページ許容(0.01=1%)。
+# 損切り(成行、close_long)のスリッページ許容(0.01=1%)。新規建玉・利確は
+# 指値(Alo)なのでスリッページの概念自体が無い。
 PERP_GRID_LIVE_SLIPPAGE = _env_float("PERP_GRID_LIVE_SLIPPAGE", 0.01)
-# market_open/market_closeはTaker扱いになるため、perp_grid_backtest.pyで
-# 検証したMaker手数料(0.015%)より高いTaker手数料(2026-07時点0.045%)を
-# 既定値にしている(損益表示の目安計算に使う)。
-PERP_GRID_LIVE_FEE_PCT_PER_SIDE = _env_float("PERP_GRID_LIVE_FEE_PCT_PER_SIDE", 0.045)
+# 新規建玉・利確決済は指値(Alo、Maker確定)なので、perp_grid_backtest.pyで
+# 検証したMaker手数料(0.015%、2026-07時点)がそのまま既定値。ただし
+# 損切り決済だけは緊急性のため成行(Taker、0.045%)を使っているため、
+# 損切りで終わった建玉についてはこの値よりわずかに実際の手数料負けが
+# 大きくなる(grid_trading.compute_grid_pnl_pctは往復で同じ料率を
+# 使う単純化をしているため、正確な内訳ではなく目安の数字)。
+PERP_GRID_LIVE_FEE_PCT_PER_SIDE = _env_float("PERP_GRID_LIVE_FEE_PCT_PER_SIDE", 0.015)
 _perp_grid_live_positions_file_path_env = os.getenv("PERP_GRID_LIVE_POSITIONS_FILE_PATH")
 PERP_GRID_LIVE_POSITIONS_FILE_PATH = (
     Path(_perp_grid_live_positions_file_path_env)

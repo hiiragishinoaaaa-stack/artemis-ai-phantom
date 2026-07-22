@@ -120,3 +120,11 @@ def notify_grid_live_closed(
 def notify_grid_live_failure(symbol: str, level_index: int, action: str, error: str) -> None:
     content = f"⚠️ [グリッド実発注] {symbol} レベル{level_index}の{action}に失敗しました\n理由: {error}"
     _send(content, config.DISCORD_TRADE_WEBHOOK_URL)
+
+
+def notify_grid_live_order_placed(symbol: str, level_index: int, price: float, action: str) -> None:
+    """指値(Alo)注文を板に並べた直後(まだ約定していない)に呼ぶ。
+    約定した時点で別途notify_grid_live_opened/closedが呼ばれる。
+    """
+    content = f"📋 [グリッド実発注] {symbol} レベル{level_index}の{action}指値を板に並べました(約定待ち)\n価格: ${price:,.4f}"
+    _send(content, config.DISCORD_TRADE_WEBHOOK_URL)

@@ -197,7 +197,7 @@ def _process_grid_symbol_live(symbol: str, tracker: "GridLiveTracker", now: floa
     の場合しか呼ばれない、async_main参照)。
     """
     import hyperliquid_client
-    from grid_live_trader import execute_close, execute_open
+    from grid_live_trader import check_pending_closes, check_pending_opens, execute_close, execute_open
     from grid_live_trader import should_open_position as should_open_live_position
 
     hl_symbol = hyperliquid_client.to_hyperliquid_symbol(symbol)
@@ -206,10 +206,18 @@ def _process_grid_symbol_live(symbol: str, tracker: "GridLiveTracker", now: floa
         logger.warning("perp_sniper: %sの価格取得に失敗しました(グリッド実発注)", hl_symbol)
         return
 
+    # 指値注文(買い・利確売り)が板に並んだままになっている分の約定確認を
+    # 毎回まず行う(新規判定より前に行い、約定済みなら決済判定の対象に
+    # 含められるようにする)。
+    check_pending_opens(tracker, now)
+    check_pending_closes(tracker, now)
+
     if tracker.center_price(hl_symbol) is None:
         tracker.set_center_price(hl_symbol, mid_price)
     levels = compute_grid_levels(tracker.center_price(hl_symbol), config.PERP_GRID_RANGE_PCT, config.PERP_GRID_COUNT)
 
+    # open_positions()は買いが約定済みの建玉のみ(pending_openは含まない、
+    # まだ約定していない建玉に利確/損切り判定をしても意味が無いため)。
     for position in tracker.open_positions(hl_symbol):
         reason = decide_grid_exit_reason(
             position.entry_price, mid_price, config.PERP_GRID_TAKE_PROFIT_PCT, config.PERP_GRID_STOP_LOSS_PCT
@@ -226,7 +234,9 @@ def _process_grid_symbol_live(symbol: str, tracker: "GridLiveTracker", now: floa
         return
     touched_low, touched_high = min(previous_price, mid_price), max(previous_price, mid_price)
 
-    open_count = len(tracker.open_positions())
+    # active_positions()は指値待ち・保有中・決済指値待ちを全て含む
+    # (同時保有数の上限は、まだ約定していない発注中の分も含めて数える)。
+    open_count = len(tracker.active_positions())
     for level_index, level_price in enumerate(levels):
         if tracker.has_open_position(hl_symbol, level_index):
             continue
