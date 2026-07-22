@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass, field
 
 import perp_market_data
+from grid_trading import compute_grid_levels
 
 
 @dataclass
@@ -125,14 +126,14 @@ def run_grid_backtest(
 
     center_price = candles[0][4]
     result.center_price = center_price
-    result.lower_bound = center_price * (1 - range_pct / 100)
-    result.upper_bound = center_price * (1 + range_pct / 100)
-    if result.upper_bound <= result.lower_bound or center_price <= 0:
+    levels = compute_grid_levels(center_price, range_pct, grid_count)
+    if not levels:
         return result
 
+    result.lower_bound = levels[0]
+    result.upper_bound = levels[-1]
     step = (result.upper_bound - result.lower_bound) / grid_count
-    result.grid_step_pct = step / center_price * 100
-    levels = [result.lower_bound + i * step for i in range(grid_count + 1)]
+    result.grid_step_pct = step / center_price * 100 if center_price else 0.0
 
     open_positions: dict[int, dict] = {}
     daily_pnl: dict[str, float] = {}

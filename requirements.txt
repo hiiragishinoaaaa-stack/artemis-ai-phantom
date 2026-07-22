@@ -7,3 +7,8 @@ discord.py>=2.4
 # 署名に必要な軽量ライブラリ(solana-py全体ではなくsoldersのみで足りる)。
 # AUTO_TRADE_ENABLED=falseなら実質使われない。
 solders>=0.28
+# grid_live_trader.py(⚠️パーペチュアル実発注、既定OFF)専用。
+# PERP_GRID_LIVE_ENABLED=falseならperp_sniper.pyはこれらをimportすらしない
+# (遅延import)ため、実発注を使わないならインストール不要。
+hyperliquid-python-sdk>=0.24
+eth-account>=0.13

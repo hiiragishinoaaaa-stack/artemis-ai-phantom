@@ -246,6 +246,63 @@ PERP_POSITIONS_FILE_PATH = (
     Path(_perp_positions_file_path_env) if _perp_positions_file_path_env else BASE_DIR / "logs" / "perp_positions.json"
 )
 
+# --- グリッドトレード(ライブ・ペーパートレード、grid_paper_trader.py。
+# perp_backtest.py[トレンド追従]のPERP_PAPER_*とは別の戦略・別の建玉管理。
+# 実資金は動かさない。既定はperp_grid_backtest.pyでの検証結果(2026-07、
+# Hyperliquid実際のMaker手数料0.015%込みでBTC/ETH/SOL全てBuy & Hold超え)
+# を踏まえた値) ---
+PERP_GRID_ENABLED = _env_bool("PERP_GRID_ENABLED", False)
+PERP_GRID_RANGE_PCT = _env_float("PERP_GRID_RANGE_PCT", 10.0)
+PERP_GRID_COUNT = _env_int("PERP_GRID_COUNT", 100)
+PERP_GRID_TAKE_PROFIT_PCT = _env_float("PERP_GRID_TAKE_PROFIT_PCT", 0.2)
+PERP_GRID_STOP_LOSS_PCT = _env_float("PERP_GRID_STOP_LOSS_PCT", -0.1)
+PERP_GRID_LEVERAGE = _env_float("PERP_GRID_LEVERAGE", 3.0)
+PERP_GRID_FEE_PCT_PER_SIDE = _env_float("PERP_GRID_FEE_PCT_PER_SIDE", 0.015)
+# 各銘柄のグリッド状態を確認する間隔(秒)。トレンド戦略より頻繁に
+# ポーリングする(グリッドは細かい値動きを捉える戦略のため)。
+PERP_GRID_POLL_INTERVAL_SECONDS = _env_int("PERP_GRID_POLL_INTERVAL_SECONDS", 30)
+# 取引のたびにDiscord通知すると件数が多すぎてスパムになるため、この間隔
+# (秒、既定24時間)ごとに集計だけ通知する(perp_notifier.notify_grid_summary)。
+PERP_GRID_SUMMARY_INTERVAL_SECONDS = _env_int("PERP_GRID_SUMMARY_INTERVAL_SECONDS", 86400)
+_perp_grid_positions_file_path_env = os.getenv("PERP_GRID_POSITIONS_FILE_PATH")
+PERP_GRID_POSITIONS_FILE_PATH = (
+    Path(_perp_grid_positions_file_path_env)
+    if _perp_grid_positions_file_path_env
+    else BASE_DIR / "logs" / "grid_positions.json"
+)
+
+# --- グリッドトレードの実発注(Hyperliquid、grid_live_trader.py。
+# ⚠️⚠️⚠️既定OFF。実際にウォレットの資金を使って売買する機能。有効化する
+# には以下を全て満たす必要がある(trade_executor.pyと同じ二重ゲート):
+#   1. PERP_GRID_LIVE_ENABLED=true
+#   2. PERP_GRID_LIVE_CONFIRMED_RISK=true(「リスクを理解した」の明示的な確認)
+#   3. HYPERLIQUID_PRIVATE_KEY設定(Ethereum形式の秘密鍵。少額専用の別
+#      ウォレットを新規に作ることを強く推奨)
+# 詳細・注意事項はREADME.mdの「パーペチュアル実発注(Hyperliquid、
+# 実験的機能)」参照。
+PERP_GRID_LIVE_ENABLED = _env_bool("PERP_GRID_LIVE_ENABLED", False)
+PERP_GRID_LIVE_CONFIRMED_RISK = _env_bool("PERP_GRID_LIVE_CONFIRMED_RISK", False)
+HYPERLIQUID_PRIVATE_KEY = os.getenv("HYPERLIQUID_PRIVATE_KEY", "")
+# true推奨(まずテストネットで動作確認してから本番=falseへ切り替えること)。
+HYPERLIQUID_USE_TESTNET = _env_bool("HYPERLIQUID_USE_TESTNET", True)
+# 1グリッドあたりの発注額(USD建て。銘柄ごとの単価が違うため、コイン数量
+# ではなくUSD額で指定し、発注時に現在価格で換算する)。
+PERP_GRID_LIVE_ORDER_USD = _env_float("PERP_GRID_LIVE_ORDER_USD", 10.0)
+# 同時に保有できるグリッド建玉数の上限(全資金を一度に晒さないため)。
+PERP_GRID_LIVE_MAX_OPEN_POSITIONS = _env_int("PERP_GRID_LIVE_MAX_OPEN_POSITIONS", 5)
+# 成行注文(market_open/market_close)のスリッページ許容(0.01=1%)。
+PERP_GRID_LIVE_SLIPPAGE = _env_float("PERP_GRID_LIVE_SLIPPAGE", 0.01)
+# market_open/market_closeはTaker扱いになるため、perp_grid_backtest.pyで
+# 検証したMaker手数料(0.015%)より高いTaker手数料(2026-07時点0.045%)を
+# 既定値にしている(損益表示の目安計算に使う)。
+PERP_GRID_LIVE_FEE_PCT_PER_SIDE = _env_float("PERP_GRID_LIVE_FEE_PCT_PER_SIDE", 0.045)
+_perp_grid_live_positions_file_path_env = os.getenv("PERP_GRID_LIVE_POSITIONS_FILE_PATH")
+PERP_GRID_LIVE_POSITIONS_FILE_PATH = (
+    Path(_perp_grid_live_positions_file_path_env)
+    if _perp_grid_live_positions_file_path_env
+    else BASE_DIR / "logs" / "grid_live_positions.json"
+)
+
 # --- 通知後の結果トラッキング(outcome_tracker.py) ---
 # WATCH/HIGHとして通知したトークンは、それ以降もこの秒数リストの経過時点
 # ごとにDexScreenerから時価総額を取得し、通知時点からの変化率を
