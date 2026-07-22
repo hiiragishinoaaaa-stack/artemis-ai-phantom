@@ -35,6 +35,21 @@ def test_fetch_closes_returns_none_on_non_list_response():
         assert perp_market_data.fetch_closes("BTCUSDT", "1h", 2) is None
 
 
+def test_fetch_klines_with_time_parses_time_and_close():
+    klines = [
+        [1000000, "1.0", "1.1", "0.9", "1.05", "100"],
+        [2000000, "1.05", "1.2", "1.0", "1.15", "120"],
+    ]
+    with patch("urllib.request.urlopen", return_value=_response(klines)):
+        candles = perp_market_data.fetch_klines_with_time("BTCUSDT", "1h", 2)
+    assert candles == [(1000.0, 1.05), (2000.0, 1.15)]
+
+
+def test_fetch_klines_with_time_returns_none_on_empty_response():
+    with patch("urllib.request.urlopen", return_value=_response([])):
+        assert perp_market_data.fetch_klines_with_time("BTCUSDT", "1h", 2) is None
+
+
 def test_fetch_latest_funding_rate_parses_value():
     with patch("urllib.request.urlopen", return_value=_response([{"fundingRate": "0.0001"}])):
         rate = perp_market_data.fetch_latest_funding_rate("BTCUSDT")

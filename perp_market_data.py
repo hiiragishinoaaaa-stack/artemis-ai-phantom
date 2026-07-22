@@ -52,6 +52,28 @@ def fetch_closes(symbol: str, interval: str, limit: int) -> list[float] | None:
     return closes or None
 
 
+def fetch_klines_with_time(symbol: str, interval: str, limit: int) -> list[tuple[float, float]] | None:
+    """直近limit本分の(始値時刻[UNIX秒], 終値)のペアを古い順で返す(perp_backtest.py用)。
+
+    fetch_closes()と違い、バックテストで「何秒後に利確/損切り/最大保有時間
+    超過に達したか」を実際のローソク足の時間軸で判定するため時刻も返す。
+    """
+    data = _get("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": str(limit)})
+    if not isinstance(data, list):
+        return None
+    result = []
+    for candle in data:
+        if not isinstance(candle, list) or len(candle) < 5:
+            continue
+        try:
+            open_time = float(candle[0]) / 1000.0
+            close = float(candle[4])
+        except (TypeError, ValueError):
+            continue
+        result.append((open_time, close))
+    return result or None
+
+
 def fetch_latest_funding_rate(symbol: str) -> float | None:
     """直近のファンディングレート(小数、例: 0.0001 = 0.01%)を返す(失敗時はNone)。
 

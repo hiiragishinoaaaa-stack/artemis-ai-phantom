@@ -553,6 +553,29 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now phantom-perp-sniper
 ```
 
+### バックテスト(`perp_backtest.py`)
+
+実運用(通知・ペーパートレード)の前に、`perp_signals.compute_signal()`の
+判定ロジックが過去の値動きに対して実際どうだったかを検証できる。各時点の
+シグナルはその時点までのデータだけで計算する(未来を覗き見ない設計)。
+
+```
+.venv/bin/python perp_backtest.py --symbol BTCUSDT
+.venv/bin/python perp_backtest.py --symbol ETHUSDT --interval 4h --limit 1000 --leverage 3
+.venv/bin/python perp_backtest.py --symbol BTCUSDT --daily-loss-limit -20
+```
+
+`--daily-loss-limit`は、その日の損益合計が指定した%(マイナス値)を
+下回ったらその日は新規エントリーを止める、「日次ドローダウン制限」
+(参考にしたgrid trading戦略の記事にあったリスク管理手法)を再現する
+オプション。
+
+**⚠️ 過去データでの結果は将来の成績を一切保証しない。** 複数銘柄・複数
+期間・複数のパラメータで試し、一貫して悪くない結果が出るかを確認して
+から、初めて本物の資金投入(Hyperliquid等への実発注、現状未実装)を
+検討すること。ファンディングレートの過去履歴は考慮していない(無料で
+まとめて取得できる手段が無いため)ぶん、実運用よりやや保守的な検証になる。
+
 ## 分析ツール(`analyze_outcomes.py`、実験的機能)
 
 過去の通知実績(Supabase設定時: 通知時のスコア項目内訳 × その後の結果、

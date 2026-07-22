@@ -44,6 +44,11 @@ def _raw_change_pct(direction: str, entry_price: float, current_price: float) ->
     return change if direction == "LONG" else -change
 
 
+def compute_pnl_pct(direction: str, entry_price: float, exit_price: float, leverage: float) -> float:
+    """レバレッジ適用後の損益率(%)。perp_backtest.pyからも同じ計算式を使うための公開関数。"""
+    return _raw_change_pct(direction, entry_price, exit_price) * leverage
+
+
 def decide_exit_reason(
     direction: str,
     entry_price: float,
@@ -60,7 +65,7 @@ def decide_exit_reason(
     """
     if entry_price <= 0:
         return None
-    pnl_pct = _raw_change_pct(direction, entry_price, current_price) * leverage
+    pnl_pct = compute_pnl_pct(direction, entry_price, current_price, leverage)
     if pnl_pct >= take_profit_pct:
         return "take_profit"
     if pnl_pct <= stop_loss_pct:
@@ -97,7 +102,7 @@ class PaperPerpTracker:
         position.close_reason = reason
         position.exit_price = exit_price
         position.closed_at = now
-        position.pnl_pct = round(_raw_change_pct(position.direction, position.entry_price, exit_price) * position.leverage, 2)
+        position.pnl_pct = round(compute_pnl_pct(position.direction, position.entry_price, exit_price, position.leverage), 2)
         self._save()
 
     def _load(self) -> None:
