@@ -21,14 +21,6 @@ from grid_trading import compute_grid_levels, compute_grid_pnl_pct, compute_grid
 logger = logging.getLogger("phantom_sniper")
 
 
-def _position_key(level_index: int, side: str) -> str:
-    """買い(long)と売り(short)が同じlevel_indexを同時に使えるよう、
-    サイドを含めた複合キーにする(1つの水準に、下落中に開いた買い建玉と
-    上昇中に開いた売り建玉が別々に存在できる)。
-    """
-    return f"{side}:{level_index}"
-
-
 @dataclass
 class GridPosition:
     symbol: str
@@ -44,12 +36,21 @@ class GridPosition:
 
 
 class GridPaperTracker:
-    """symbolごとのグリッド中心価格と、(サイド, level_index)ごとの建玉を保持するクラス。"""
+    """symbolごとのグリッド中心価格と、建玉の履歴(決済済みも含めて全件)を
+    保持するクラス。
+
+    グリッドの各水準は決済されると再び使えるようになる設計だが、以前は
+    (level_index, side)をキーにした辞書で1建玉しか保持できず、同じ水準を
+    再利用するたびに過去の決済記録(勝敗・損益)が新しい建玉で上書きされて
+    消えていた(実際にこのバグで、累計勝率・累計損益が時間とともに減る
+    という事象が発生した)。symbolごとに追記専用のリストで保持することで、
+    過去の記録を消さずに全件残す。
+    """
 
     def __init__(self) -> None:
         self._centers: dict[str, float] = {}
         self._last_prices: dict[str, float] = {}
-        self._positions: dict[str, dict[str, GridPosition]] = {}
+        self._positions: dict[str, list[GridPosition]] = {}
         self._load()
 
     def get_or_init_levels(self, symbol: str, current_price: float, range_pct: float, grid_count: int) -> list[float]:
@@ -75,26 +76,28 @@ class GridPaperTracker:
         self._save()
 
     def has_open_position(self, symbol: str, level_index: int, side: str = "long") -> bool:
-        pos = self._positions.get(symbol, {}).get(_position_key(level_index, side))
-        return pos is not None and not pos.closed
+        return any(
+            p.level_index == level_index and p.side == side and not p.closed
+            for p in self._positions.get(symbol, [])
+        )
 
     def open_positions(self, symbol: str | None = None) -> list[GridPosition]:
         result = []
-        for sym, levels in self._positions.items():
+        for sym, positions in self._positions.items():
             if symbol is not None and sym != symbol:
                 continue
-            result.extend(p for p in levels.values() if not p.closed)
+            result.extend(p for p in positions if not p.closed)
         return result
 
     def all_positions(self, symbol: str) -> list[GridPosition]:
-        """指定銘柄の建玉を、決済済み・保有中どちらも含めて返す(集計通知用)。"""
-        return list(self._positions.get(symbol, {}).values())
+        """指定銘柄の建玉を、決済済み・保有中どちらも含めて全件返す(集計通知用)。"""
+        return list(self._positions.get(symbol, []))
 
     def open_position(
         self, symbol: str, level_index: int, entry_price: float, now: float, side: str = "long"
     ) -> GridPosition:
         position = GridPosition(symbol=symbol, level_index=level_index, entry_price=entry_price, opened_at=now, side=side)
-        self._positions.setdefault(symbol, {})[_position_key(level_index, side)] = position
+        self._positions.setdefault(symbol, []).append(position)
         self._save()
         return position
 
@@ -128,10 +131,14 @@ class GridPaperTracker:
             self._centers = {str(k): float(v) for k, v in (data.get("centers") or {}).items()}
             self._last_prices = {str(k): float(v) for k, v in (data.get("last_prices") or {}).items()}
             positions_raw = data.get("positions") or {}
-            self._positions = {
-                symbol: {key: GridPosition(**fields) for key, fields in levels.items()}
-                for symbol, levels in positions_raw.items()
-            }
+            self._positions = {}
+            for symbol, entries in positions_raw.items():
+                # 旧形式(level_index/複合キーごとの辞書)のファイルが残っていても
+                # 読み込めるよう、辞書ならvalues()をリストとして扱う(過去の記録を
+                # 上書きしていた旧設計からの移行。新規保存は常にリスト形式)。
+                if isinstance(entries, dict):
+                    entries = list(entries.values())
+                self._positions[symbol] = [GridPosition(**fields) for fields in entries]
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("grid_paper_trader: 読み込みに失敗しました: %s", exc)
 
@@ -144,8 +151,8 @@ class GridPaperTracker:
                 "centers": self._centers,
                 "last_prices": self._last_prices,
                 "positions": {
-                    symbol: {key: asdict(pos) for key, pos in levels.items()}
-                    for symbol, levels in self._positions.items()
+                    symbol: [asdict(pos) for pos in positions]
+                    for symbol, positions in self._positions.items()
                 },
             }
             with tmp_path.open("w", encoding="utf-8") as f:

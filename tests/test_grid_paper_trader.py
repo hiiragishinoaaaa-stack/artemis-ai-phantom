@@ -81,6 +81,26 @@ def test_close_short_position_profits_on_price_drop():
     assert tracker.has_open_position("BTCUSDT", 3, side="short") is False
 
 
+def test_reopening_same_level_preserves_prior_closed_history():
+    """過去のバグの回帰テスト: 同じ水準が決済後に再利用されても、以前の
+    決済記録(勝敗・損益)が新しい建玉の記録で上書きされて消えないこと。
+    """
+    tracker = GridPaperTracker()
+    first = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1000.0)
+    tracker.close_position(first, exit_price=101.0, reason="take_profit", now=1010.0, leverage=3.0, fee_pct_per_side=0.0)
+
+    # 同じ水準・同じサイドで2回目の建玉を開いて決済する(損切り)。
+    second = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1020.0)
+    tracker.close_position(second, exit_price=99.5, reason="stop_loss", now=1030.0, leverage=3.0, fee_pct_per_side=0.0)
+
+    all_positions = tracker.all_positions("BTCUSDT")
+    assert len(all_positions) == 2
+    wins = sum(1 for p in all_positions if p.pnl_pct > 0)
+    losses = sum(1 for p in all_positions if p.pnl_pct < 0)
+    assert wins == 1
+    assert losses == 1
+
+
 def test_all_positions_includes_closed():
     tracker = GridPaperTracker()
     position = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1000.0)

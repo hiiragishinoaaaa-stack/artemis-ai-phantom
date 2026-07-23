@@ -78,12 +78,19 @@ def should_open_position(open_position_count: int) -> tuple[bool, str]:
 
 
 class GridLiveTracker:
-    """symbol -> {level_index: GridLivePosition} を保持し、JSONへ永続化するクラス。"""
+    """symbolごとに建玉の履歴(決済済みも含めて全件)を追記専用のリストで
+    保持し、JSONへ永続化するクラス。
+
+    以前はlevel_indexをキーにした辞書で1建玉しか保持できず、同じ水準を
+    再利用するたびに過去の決済記録が新しい建玉で上書きされて消えていた
+    (grid_paper_trader.pyのGridPaperTrackerで実際に発生したのと同じ設計上の
+    バグ。実発注はまだ本番投入前だが、同じ穴を残さないためここも修正)。
+    """
 
     def __init__(self) -> None:
         self._centers: dict[str, float] = {}
         self._last_prices: dict[str, float] = {}
-        self._positions: dict[str, dict[int, GridLivePosition]] = {}
+        self._positions: dict[str, list[GridLivePosition]] = {}
         self._load()
 
     def center_price(self, symbol: str) -> float | None:
@@ -108,18 +115,17 @@ class GridLiveTracker:
         """その水準が何らかの形で「使用中」(指値待ち・保有中・決済指値待ち)
         かどうか。新規に買い注文を出すべきでない水準を判定するために使う。
         """
-        pos = self._positions.get(symbol, {}).get(level_index)
-        return pos is not None and not pos.closed
+        return any(p.level_index == level_index and not p.closed for p in self._positions.get(symbol, []))
 
     def active_positions(self, symbol: str | None = None) -> list[GridLivePosition]:
         """決済済みでない建玉(指値待ち・保有中・決済指値待ち全て含む)。
         同時保有数の上限判定(should_open_position)に使う。
         """
         result = []
-        for sym, levels in self._positions.items():
+        for sym, positions in self._positions.items():
             if symbol is not None and sym != symbol:
                 continue
-            result.extend(p for p in levels.values() if not p.closed)
+            result.extend(p for p in positions if not p.closed)
         return result
 
     def open_positions(self, symbol: str | None = None) -> list[GridLivePosition]:
@@ -128,30 +134,30 @@ class GridLiveTracker:
         対して決済判定をするのは意味が無いため)。
         """
         result = []
-        for sym, levels in self._positions.items():
+        for sym, positions in self._positions.items():
             if symbol is not None and sym != symbol:
                 continue
-            result.extend(p for p in levels.values() if not p.closed and not p.pending_open)
+            result.extend(p for p in positions if not p.closed and not p.pending_open)
         return result
 
     def pending_open_positions(self, symbol: str | None = None) -> list[GridLivePosition]:
         result = []
-        for sym, levels in self._positions.items():
+        for sym, positions in self._positions.items():
             if symbol is not None and sym != symbol:
                 continue
-            result.extend(p for p in levels.values() if not p.closed and p.pending_open)
+            result.extend(p for p in positions if not p.closed and p.pending_open)
         return result
 
     def pending_close_positions(self, symbol: str | None = None) -> list[GridLivePosition]:
         result = []
-        for sym, levels in self._positions.items():
+        for sym, positions in self._positions.items():
             if symbol is not None and sym != symbol:
                 continue
-            result.extend(p for p in levels.values() if not p.closed and p.pending_close)
+            result.extend(p for p in positions if not p.closed and p.pending_close)
         return result
 
     def all_positions(self, symbol: str) -> list[GridLivePosition]:
-        return list(self._positions.get(symbol, {}).values())
+        return list(self._positions.get(symbol, []))
 
     def record_open(self, symbol: str, level_index: int, entry_price: float, size: float, avg_price: float, now: float) -> GridLivePosition:
         """買いが即座に約定した場合に、その結果を建玉として記録する
@@ -160,7 +166,7 @@ class GridLiveTracker:
         position = GridLivePosition(
             symbol=symbol, level_index=level_index, entry_price=entry_price, size=size, opened_at=now, open_avg_price=avg_price
         )
-        self._positions.setdefault(symbol, {})[level_index] = position
+        self._positions.setdefault(symbol, []).append(position)
         self._save()
         return position
 
@@ -178,7 +184,7 @@ class GridLiveTracker:
             pending_open=True,
             open_oid=oid,
         )
-        self._positions.setdefault(symbol, {})[level_index] = position
+        self._positions.setdefault(symbol, []).append(position)
         self._save()
         return position
 
@@ -196,12 +202,17 @@ class GridLiveTracker:
     def remove_position(self, symbol: str, level_index: int) -> None:
         """pending_openの注文がキャンセル/拒否されて約定しなかった場合、
         建玉として存在しなかったことにする(その水準はまた新規に狙える
-        ようにする)。
+        ようにする)。過去の決済済み履歴には触れず、まだ決済されていない
+        (pending_openのまま=約定しなかった)エントリだけを取り除く。
         """
-        levels = self._positions.get(symbol)
-        if levels and level_index in levels:
-            del levels[level_index]
-            self._save()
+        positions = self._positions.get(symbol)
+        if not positions:
+            return
+        for i, p in enumerate(positions):
+            if p.level_index == level_index and not p.closed:
+                del positions[i]
+                self._save()
+                return
 
     def record_pending_close(self, position: GridLivePosition, oid: int, reason: str, now: float) -> None:
         """利確の指値決済注文を送信し、板に並んだ状態を記録する
@@ -257,10 +268,14 @@ class GridLiveTracker:
             self._centers = {str(k): float(v) for k, v in (data.get("centers") or {}).items()}
             self._last_prices = {str(k): float(v) for k, v in (data.get("last_prices") or {}).items()}
             positions_raw = data.get("positions") or {}
-            self._positions = {
-                symbol: {int(level_index): GridLivePosition(**fields) for level_index, fields in levels.items()}
-                for symbol, levels in positions_raw.items()
-            }
+            self._positions = {}
+            for symbol, entries in positions_raw.items():
+                # 旧形式(level_indexごとの辞書)のファイルが残っていても
+                # 読み込めるよう、辞書ならvalues()をリストとして扱う(過去の
+                # 記録を上書きしていた旧設計からの移行。新規保存は常にリスト形式)。
+                if isinstance(entries, dict):
+                    entries = list(entries.values())
+                self._positions[symbol] = [GridLivePosition(**fields) for fields in entries]
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("grid_live_trader: 読み込みに失敗しました: %s", exc)
 
@@ -273,8 +288,8 @@ class GridLiveTracker:
                 "centers": self._centers,
                 "last_prices": self._last_prices,
                 "positions": {
-                    symbol: {str(level_index): asdict(pos) for level_index, pos in levels.items()}
-                    for symbol, levels in self._positions.items()
+                    symbol: [asdict(pos) for pos in positions]
+                    for symbol, positions in self._positions.items()
                 },
             }
             with tmp_path.open("w", encoding="utf-8") as f:

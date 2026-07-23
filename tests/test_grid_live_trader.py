@@ -91,6 +91,26 @@ def test_tracker_open_and_close_position_round_trip():
     assert tracker.has_open_position("BTC", 3) is False
 
 
+def test_reopening_same_level_preserves_prior_closed_history():
+    """過去のバグの回帰テスト(grid_paper_trader.pyと同じ設計上の欠陥):
+    同じ水準が決済後に再利用されても、以前の決済記録が上書きされて
+    消えないこと。
+    """
+    tracker = GridLiveTracker()
+    first = tracker.record_open("BTC", level_index=3, entry_price=100.0, size=0.001, avg_price=100.0, now=1000.0)
+    tracker.record_close(first, exit_price=101.0, reason="take_profit", now=1010.0, leverage=3.0, fee_pct_per_side=0.0)
+
+    second = tracker.record_open("BTC", level_index=3, entry_price=100.0, size=0.001, avg_price=100.0, now=1020.0)
+    tracker.record_close(second, exit_price=99.0, reason="stop_loss", now=1030.0, leverage=3.0, fee_pct_per_side=0.0)
+
+    all_positions = tracker.all_positions("BTC")
+    assert len(all_positions) == 2
+    wins = sum(1 for p in all_positions if p.pnl_pct > 0)
+    losses = sum(1 for p in all_positions if p.pnl_pct < 0)
+    assert wins == 1
+    assert losses == 1
+
+
 def test_tracker_persists_to_disk_and_reloads():
     tracker = GridLiveTracker()
     tracker.set_center_price("BTC", 100.0)
