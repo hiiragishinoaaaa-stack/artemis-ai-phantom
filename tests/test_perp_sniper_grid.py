@@ -57,6 +57,23 @@ def test_second_poll_opens_only_levels_price_actually_crossed():
     assert all(price <= 100.0 for price in opened_prices)
 
 
+def test_upward_movement_does_not_open_positions():
+    """上昇中に水準をまたいでも買わないこと(「下がったら買い」が前提の
+    グリッド戦略で、上昇中の通過も買ってしまうと、上昇トレンド中は
+    見かけ上の勝率が実力以上に高くなり、反転時に逆回転して含み損が
+    積み上がるという実害が過去に発生した回帰テスト)。
+    """
+    tracker = GridPaperTracker()
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1000.0)
+
+    # 100 -> 104: 中心より上の水準をまたぐが、上昇中なので何も買わないはず。
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=104.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1010.0)
+
+    assert tracker.open_positions("BTCUSDT") == []
+
+
 def test_no_movement_opens_nothing_on_second_poll():
     tracker = GridPaperTracker()
     with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.0):

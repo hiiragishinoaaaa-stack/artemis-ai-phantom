@@ -20,6 +20,30 @@ def compute_grid_levels(center_price: float, range_pct: float, grid_count: int) 
     return [lower + i * step for i in range(grid_count + 1)]
 
 
+def level_touched_on_dip(previous_price: float, current_price: float, level_price: float) -> bool:
+    """価格が下落してこの水準に触れた(通過した)場合のみtrueを返す(純粋関数)。
+
+    このグリッド戦略は「下がったら買い、少し上がったら利確売り」が前提
+    (買い(ロング)専用)。だが、単純に「前回価格〜今回価格の区間に水準が
+    入っていたか」だけで判定すると、価格が上昇して水準をまたいだ場合にも
+    「買い」が発生してしまう。これは実際の指値注文の仕組みとも合わない
+    (買い指値は現在価格より下に置くものであり、価格が上がって初めて
+    通過した水準に、後から买い注文が入ることはない)。
+
+    上昇相場が続く間はこの歪みのおかげで見かけ上勝率が高くなるが
+    (常に「今動いている方向」に沿って建玉が開かれるため)、相場が反転
+    すると同じ歪みが逆に働き、下落中にも買い増しを続けてしまい、含み損
+    ばかりが積み上がる(実際にこの問題が発生し、一晩で複数銘柄の勝率が
+    0%近くまで悪化した)。
+
+    値下がりが実際に起きて(previous_price > current_price)、かつ
+    その値下がり区間にlevel_priceが入っている場合のみtrueを返す。
+    """
+    if previous_price <= current_price:
+        return False
+    return current_price <= level_price <= previous_price
+
+
 def decide_grid_exit_reason(
     entry_price: float, current_price: float, take_profit_pct: float, stop_loss_pct: float
 ) -> str | None:

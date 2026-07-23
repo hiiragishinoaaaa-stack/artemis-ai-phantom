@@ -200,7 +200,11 @@ def run_grid_backtest(
         for i, level in enumerate(levels):
             if i in open_positions:
                 continue
-            if low <= level <= high:
+            # 値下がりで水準に触れた場合のみ買う(この足の始値を「直前の価格」、
+            # 安値を「値下がりが到達した範囲」とみなす。grid_trading.
+            # level_touched_on_dipのperp_sniper.py版と同じ考え方。高値側だけで
+            # 水準をまたいだ場合=上昇中に通過しただけの場合は買わない)。
+            if low <= level <= _open_price:
                 open_positions[i] = {"entry_price": level, "opened_at": now}
 
     result.still_open_count = len(open_positions)

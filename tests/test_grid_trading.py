@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from grid_trading import compute_grid_levels, compute_grid_pnl_pct, decide_grid_exit_reason, funding_cost_pct
+from grid_trading import (
+    compute_grid_levels,
+    compute_grid_pnl_pct,
+    decide_grid_exit_reason,
+    funding_cost_pct,
+    level_touched_on_dip,
+)
 
 
 def test_compute_grid_levels_basic():
@@ -66,3 +72,24 @@ def test_funding_cost_pct_negative_rate_is_a_gain():
 
 def test_funding_cost_pct_empty_history_is_zero():
     assert funding_cost_pct([], opened_at=0.0, closed_at=1.0, leverage=3.0) == 0.0
+
+
+def test_level_touched_on_dip_true_when_price_falls_through_level():
+    assert level_touched_on_dip(previous_price=100.0, current_price=96.0, level_price=98.0) is True
+
+
+def test_level_touched_on_dip_false_when_price_rises_through_level():
+    assert level_touched_on_dip(previous_price=96.0, current_price=100.0, level_price=98.0) is False
+
+
+def test_level_touched_on_dip_false_when_price_unchanged():
+    assert level_touched_on_dip(previous_price=100.0, current_price=100.0, level_price=100.0) is False
+
+
+def test_level_touched_on_dip_false_when_level_outside_fall_range():
+    assert level_touched_on_dip(previous_price=100.0, current_price=96.0, level_price=94.0) is False
+
+
+def test_level_touched_on_dip_true_at_exact_boundaries():
+    assert level_touched_on_dip(previous_price=100.0, current_price=96.0, level_price=100.0) is True
+    assert level_touched_on_dip(previous_price=100.0, current_price=96.0, level_price=96.0) is True
