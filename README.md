@@ -574,6 +574,24 @@ sudo systemctl enable --now phantom-perp-sniper
 PERP_GRID_ENABLED=true
 ```
 
+買いグリッドは「値下がりで水準に触れた場合のみ」買う(`grid_trading.
+level_touched_on_dip`)。単純に「水準をまたいだか」だけで判定すると、
+上昇中に水準を通過しただけでも買ってしまい、上昇相場では見かけ上の
+勝率が実力以上に高く出て、相場が反転すると同じ歪みが逆に働いて
+含み損が積み上がる(実際にこの問題が発生し、一晩で複数銘柄の勝率が
+0%近くまで悪化したことがある)。
+
+`PERP_GRID_SHORT_ENABLED=true`にすると、買いグリッドとは独立に売り
+(ショート)グリッドも同時にペーパートレードする(「両建て」、
+`level_touched_on_rise`で値上がり時のみ売る)。上下どちらの波でも
+利確を狙えるが、必要証拠金・同時保有数は実質倍になり、含み損が
+積み上がるリスクも買い・売り両方向に広がる点に注意。実発注
+(`grid_live_trader.py`)は未対応、ペーパートレードのみ。
+
+```
+PERP_GRID_SHORT_ENABLED=true
+```
+
 ## ⚠️⚠️⚠️ パーペチュアル実発注(Hyperliquid、実験的機能、既定OFF)
 
 `grid_live_trader.py`は、上記グリッドトレード戦略を**実際のHyperliquid

@@ -63,6 +63,24 @@ def test_close_position_deducts_funding_cost():
     assert position.pnl_pct == pytest.approx(2.5)
 
 
+def test_long_and_short_can_coexist_at_same_level_index():
+    tracker = GridPaperTracker()
+    tracker.open_position("BTCUSDT", level_index=3, entry_price=95.0, now=1000.0, side="long")
+    tracker.open_position("BTCUSDT", level_index=3, entry_price=105.0, now=1000.0, side="short")
+    assert tracker.has_open_position("BTCUSDT", 3, side="long") is True
+    assert tracker.has_open_position("BTCUSDT", 3, side="short") is True
+    assert len(tracker.open_positions("BTCUSDT")) == 2
+
+
+def test_close_short_position_profits_on_price_drop():
+    tracker = GridPaperTracker()
+    position = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1000.0, side="short")
+    tracker.close_position(position, exit_price=99.0, reason="take_profit", now=1010.0, leverage=3.0, fee_pct_per_side=0.0)
+    assert position.closed is True
+    assert position.pnl_pct == pytest.approx(3.0)
+    assert tracker.has_open_position("BTCUSDT", 3, side="short") is False
+
+
 def test_all_positions_includes_closed():
     tracker = GridPaperTracker()
     position = tracker.open_position("BTCUSDT", level_index=3, entry_price=100.0, now=1000.0)

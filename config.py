@@ -258,6 +258,13 @@ PERP_GRID_TAKE_PROFIT_PCT = _env_float("PERP_GRID_TAKE_PROFIT_PCT", 0.2)
 PERP_GRID_STOP_LOSS_PCT = _env_float("PERP_GRID_STOP_LOSS_PCT", -0.1)
 PERP_GRID_LEVERAGE = _env_float("PERP_GRID_LEVERAGE", 3.0)
 PERP_GRID_FEE_PCT_PER_SIDE = _env_float("PERP_GRID_FEE_PCT_PER_SIDE", 0.015)
+# trueにすると、買いグリッド(下がったら買い、戻ったら利確)に加えて
+# 売りグリッド(上がったら売り、戻ったら利確)も同時にペーパートレードする
+# (「両建て」、既定false=買いのみ)。上下どちらの波でも利確を狙える一方、
+# 必要証拠金・同時保有数は実質倍になり、含み損が積み上がるリスクも
+# 買い・売り両方向に広がる点に注意(grid_trading.level_touched_on_rise
+# 参照)。実発注(grid_live_trader.py)は未対応、ペーパートレードのみ。
+PERP_GRID_SHORT_ENABLED = _env_bool("PERP_GRID_SHORT_ENABLED", False)
 # 各銘柄のグリッド状態を確認する間隔(秒)。トレンド戦略より頻繁に
 # ポーリングする(グリッドは細かい値動きを捉える戦略のため)。
 PERP_GRID_POLL_INTERVAL_SECONDS = _env_int("PERP_GRID_POLL_INTERVAL_SECONDS", 30)

@@ -16,9 +16,17 @@ import logging
 from dataclasses import asdict, dataclass
 
 import config
-from grid_trading import compute_grid_levels, compute_grid_pnl_pct
+from grid_trading import compute_grid_levels, compute_grid_pnl_pct, compute_grid_pnl_pct_short
 
 logger = logging.getLogger("phantom_sniper")
+
+
+def _position_key(level_index: int, side: str) -> str:
+    """買い(long)と売り(short)が同じlevel_indexを同時に使えるよう、
+    サイドを含めた複合キーにする(1つの水準に、下落中に開いた買い建玉と
+    上昇中に開いた売り建玉が別々に存在できる)。
+    """
+    return f"{side}:{level_index}"
 
 
 @dataclass
@@ -27,6 +35,7 @@ class GridPosition:
     level_index: int
     entry_price: float
     opened_at: float
+    side: str = "long"  # "long" | "short"
     closed: bool = False
     close_reason: str = ""
     exit_price: float = 0.0
@@ -35,12 +44,12 @@ class GridPosition:
 
 
 class GridPaperTracker:
-    """symbolごとのグリッド中心価格と、level_indexごとの建玉を保持するクラス。"""
+    """symbolごとのグリッド中心価格と、(サイド, level_index)ごとの建玉を保持するクラス。"""
 
     def __init__(self) -> None:
         self._centers: dict[str, float] = {}
         self._last_prices: dict[str, float] = {}
-        self._positions: dict[str, dict[int, GridPosition]] = {}
+        self._positions: dict[str, dict[str, GridPosition]] = {}
         self._load()
 
     def get_or_init_levels(self, symbol: str, current_price: float, range_pct: float, grid_count: int) -> list[float]:
@@ -65,8 +74,8 @@ class GridPaperTracker:
         self._last_prices[symbol] = price
         self._save()
 
-    def has_open_position(self, symbol: str, level_index: int) -> bool:
-        pos = self._positions.get(symbol, {}).get(level_index)
+    def has_open_position(self, symbol: str, level_index: int, side: str = "long") -> bool:
+        pos = self._positions.get(symbol, {}).get(_position_key(level_index, side))
         return pos is not None and not pos.closed
 
     def open_positions(self, symbol: str | None = None) -> list[GridPosition]:
@@ -81,9 +90,11 @@ class GridPaperTracker:
         """指定銘柄の建玉を、決済済み・保有中どちらも含めて返す(集計通知用)。"""
         return list(self._positions.get(symbol, {}).values())
 
-    def open_position(self, symbol: str, level_index: int, entry_price: float, now: float) -> GridPosition:
-        position = GridPosition(symbol=symbol, level_index=level_index, entry_price=entry_price, opened_at=now)
-        self._positions.setdefault(symbol, {})[level_index] = position
+    def open_position(
+        self, symbol: str, level_index: int, entry_price: float, now: float, side: str = "long"
+    ) -> GridPosition:
+        position = GridPosition(symbol=symbol, level_index=level_index, entry_price=entry_price, opened_at=now, side=side)
+        self._positions.setdefault(symbol, {})[_position_key(level_index, side)] = position
         self._save()
         return position
 
@@ -101,9 +112,8 @@ class GridPaperTracker:
         position.close_reason = reason
         position.exit_price = exit_price
         position.closed_at = now
-        position.pnl_pct = round(
-            compute_grid_pnl_pct(position.entry_price, exit_price, leverage, fee_pct_per_side, funding_cost_pct), 4
-        )
+        pnl_fn = compute_grid_pnl_pct_short if position.side == "short" else compute_grid_pnl_pct
+        position.pnl_pct = round(pnl_fn(position.entry_price, exit_price, leverage, fee_pct_per_side, funding_cost_pct), 4)
         self._save()
 
     def _load(self) -> None:
@@ -119,7 +129,7 @@ class GridPaperTracker:
             self._last_prices = {str(k): float(v) for k, v in (data.get("last_prices") or {}).items()}
             positions_raw = data.get("positions") or {}
             self._positions = {
-                symbol: {int(level_index): GridPosition(**fields) for level_index, fields in levels.items()}
+                symbol: {key: GridPosition(**fields) for key, fields in levels.items()}
                 for symbol, levels in positions_raw.items()
             }
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
@@ -134,7 +144,7 @@ class GridPaperTracker:
                 "centers": self._centers,
                 "last_prices": self._last_prices,
                 "positions": {
-                    symbol: {str(level_index): asdict(pos) for level_index, pos in levels.items()}
+                    symbol: {key: asdict(pos) for key, pos in levels.items()}
                     for symbol, levels in self._positions.items()
                 },
             }

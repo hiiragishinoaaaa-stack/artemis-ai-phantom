@@ -6,9 +6,12 @@ import pytest
 from grid_trading import (
     compute_grid_levels,
     compute_grid_pnl_pct,
+    compute_grid_pnl_pct_short,
     decide_grid_exit_reason,
+    decide_grid_exit_reason_short,
     funding_cost_pct,
     level_touched_on_dip,
+    level_touched_on_rise,
 )
 
 
@@ -93,3 +96,49 @@ def test_level_touched_on_dip_false_when_level_outside_fall_range():
 def test_level_touched_on_dip_true_at_exact_boundaries():
     assert level_touched_on_dip(previous_price=100.0, current_price=96.0, level_price=100.0) is True
     assert level_touched_on_dip(previous_price=100.0, current_price=96.0, level_price=96.0) is True
+
+
+def test_level_touched_on_rise_true_when_price_rises_through_level():
+    assert level_touched_on_rise(previous_price=100.0, current_price=104.0, level_price=102.0) is True
+
+
+def test_level_touched_on_rise_false_when_price_falls_through_level():
+    assert level_touched_on_rise(previous_price=104.0, current_price=100.0, level_price=102.0) is False
+
+
+def test_level_touched_on_rise_false_when_price_unchanged():
+    assert level_touched_on_rise(previous_price=100.0, current_price=100.0, level_price=100.0) is False
+
+
+def test_level_touched_on_rise_false_when_level_outside_rise_range():
+    assert level_touched_on_rise(previous_price=100.0, current_price=104.0, level_price=106.0) is False
+
+
+def test_decide_grid_exit_reason_short_take_profit_on_price_drop():
+    assert decide_grid_exit_reason_short(100.0, 99.0, take_profit_pct=1.0, stop_loss_pct=-0.5) == "take_profit"
+
+
+def test_decide_grid_exit_reason_short_stop_loss_on_price_rise():
+    assert decide_grid_exit_reason_short(100.0, 100.6, take_profit_pct=1.0, stop_loss_pct=-0.5) == "stop_loss"
+
+
+def test_decide_grid_exit_reason_short_none_when_within_band():
+    assert decide_grid_exit_reason_short(100.0, 100.2, take_profit_pct=1.0, stop_loss_pct=-0.5) is None
+
+
+def test_compute_grid_pnl_pct_short_profits_on_price_drop():
+    assert compute_grid_pnl_pct_short(100.0, 99.0, leverage=3.0) == pytest.approx(3.0)
+
+
+def test_compute_grid_pnl_pct_short_loses_on_price_rise():
+    assert compute_grid_pnl_pct_short(100.0, 101.0, leverage=3.0) == pytest.approx(-3.0)
+
+
+def test_compute_grid_pnl_pct_short_deducts_fee():
+    # 1%値下がり * 3倍 - 往復手数料(0.02%*2*3倍) = 3.0 - 0.12 = 2.88
+    assert compute_grid_pnl_pct_short(100.0, 99.0, leverage=3.0, fee_pct_per_side=0.02) == pytest.approx(2.88)
+
+
+def test_compute_grid_pnl_pct_short_funding_cost_sign_is_flipped():
+    # ロング基準で+0.5(コスト)のfunding_cost_pctは、ショートには加算される(得になる)
+    assert compute_grid_pnl_pct_short(100.0, 99.0, leverage=3.0, funding_cost_pct=0.5) == pytest.approx(3.5)

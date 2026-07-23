@@ -44,6 +44,19 @@ def level_touched_on_dip(previous_price: float, current_price: float, level_pric
     return current_price <= level_price <= previous_price
 
 
+def level_touched_on_rise(previous_price: float, current_price: float, level_price: float) -> bool:
+    """価格が上昇してこの水準に触れた(通過した)場合のみtrueを返す(純粋関数)。
+
+    level_touched_on_dip()のショート(売り)版。「上がったら売り、少し
+    下がったら利確買い戻し」が前提のショートグリッド用: 値上がりが実際に
+    起きて(previous_price < current_price)、かつその値上がり区間に
+    level_priceが入っている場合のみtrueを返す。
+    """
+    if previous_price >= current_price:
+        return False
+    return previous_price <= level_price <= current_price
+
+
 def decide_grid_exit_reason(
     entry_price: float, current_price: float, take_profit_pct: float, stop_loss_pct: float
 ) -> str | None:
@@ -59,6 +72,23 @@ def decide_grid_exit_reason(
     if entry_price <= 0:
         return None
     change_pct = (current_price - entry_price) / entry_price * 100
+    if change_pct >= take_profit_pct:
+        return "take_profit"
+    if change_pct <= stop_loss_pct:
+        return "stop_loss"
+    return None
+
+
+def decide_grid_exit_reason_short(
+    entry_price: float, current_price: float, take_profit_pct: float, stop_loss_pct: float
+) -> str | None:
+    """ショート(売り)グリッド建玉版のdecide_grid_exit_reason。値動きの
+    符号がロングと逆(値下がりで含み益、値上がりで含み損)になる点以外は
+    同じロジック。
+    """
+    if entry_price <= 0:
+        return None
+    change_pct = (entry_price - current_price) / entry_price * 100
     if change_pct >= take_profit_pct:
         return "take_profit"
     if change_pct <= stop_loss_pct:
@@ -82,6 +112,26 @@ def compute_grid_pnl_pct(
         return 0.0
     raw_pct = (exit_price - entry_price) / entry_price * 100
     return raw_pct * leverage - 2 * fee_pct_per_side * leverage - funding_cost_pct
+
+
+def compute_grid_pnl_pct_short(
+    entry_price: float,
+    exit_price: float,
+    leverage: float,
+    fee_pct_per_side: float = 0.0,
+    funding_cost_pct: float = 0.0,
+) -> float:
+    """1回のショートグリッド往復(売り→買い戻し)の損益率(%)。
+    compute_grid_pnl_pct()のショート版: 値下がりが利益になる点と、
+    ファンディングの符号が逆(正のレートはロングがショートへ支払う=
+    ショート側は受け取りで得になる)点が異なる。funding_cost_pctは
+    funding_cost_pct()関数(ロング建玉基準の符号)の戻り値をそのまま渡す
+    想定で、ここで符号を反転させて加算する。
+    """
+    if entry_price <= 0:
+        return 0.0
+    raw_pct = (entry_price - exit_price) / entry_price * 100
+    return raw_pct * leverage - 2 * fee_pct_per_side * leverage + funding_cost_pct
 
 
 def funding_cost_pct(funding_rate_history: list[tuple[float, float]], opened_at: float, closed_at: float, leverage: float) -> float:

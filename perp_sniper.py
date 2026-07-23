@@ -47,7 +47,13 @@ import config
 import perp_market_data
 import perp_notifier
 from grid_paper_trader import GridPaperTracker
-from grid_trading import compute_grid_levels, decide_grid_exit_reason, level_touched_on_dip
+from grid_trading import (
+    compute_grid_levels,
+    decide_grid_exit_reason,
+    decide_grid_exit_reason_short,
+    level_touched_on_dip,
+    level_touched_on_rise,
+)
 from logger import setup_logger
 from perp_paper_trader import PaperPerpTracker, decide_exit_reason
 from perp_signals import compute_signal
@@ -131,11 +137,16 @@ def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: flo
     グリッドの半分近くが初回ポーリングで一斉に約定したように誤判定して
     しまう、という過去のバグへの対策)。
 
-    さらに、買い(ロング)専用グリッドは「下がったら買い」が前提なので、
+    さらに、買い(ロング)グリッドは「下がったら買い」が前提なので、
     level_touched_on_dip()により**値下がりで水準に触れた場合のみ**買う
     (上昇中に水準をまたいだだけでは買わない。詳細は同関数のdocstring
     参照。上昇相場でこの判定が無いと見かけ上の勝率が実力以上に高く出て、
     相場反転時に逆回転して含み損が積み上がるという実害が過去に発生した)。
+
+    config.PERP_GRID_SHORT_ENABLED=trueの場合、買いグリッドとは独立に
+    売り(ショート)グリッドも同時に動かす(「上がったら売り、戻ったら
+    利確買い戻し」、level_touched_on_rise参照)。同じlevel_indexでも
+    サイドが違えば別の建玉として扱う(GridPaperTracker参照)。
     """
     current_price = perp_market_data.fetch_mark_price(symbol)
     if current_price is None:
@@ -145,7 +156,8 @@ def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: flo
     levels = grid_positions.get_or_init_levels(symbol, current_price, config.PERP_GRID_RANGE_PCT, config.PERP_GRID_COUNT)
 
     for position in grid_positions.open_positions(symbol):
-        reason = decide_grid_exit_reason(
+        exit_decider = decide_grid_exit_reason_short if position.side == "short" else decide_grid_exit_reason
+        reason = exit_decider(
             position.entry_price, current_price, config.PERP_GRID_TAKE_PROFIT_PCT, config.PERP_GRID_STOP_LOSS_PCT
         )
         if reason is not None:
@@ -166,10 +178,14 @@ def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: flo
     grid_positions.set_last_price(symbol, current_price)
     if previous_price is not None:
         for level_index, level_price in enumerate(levels):
-            if grid_positions.has_open_position(symbol, level_index):
-                continue
-            if level_touched_on_dip(previous_price, current_price, level_price):
-                grid_positions.open_position(symbol, level_index, level_price, now)
+            if not grid_positions.has_open_position(symbol, level_index, side="long"):
+                if level_touched_on_dip(previous_price, current_price, level_price):
+                    grid_positions.open_position(symbol, level_index, level_price, now, side="long")
+            if config.PERP_GRID_SHORT_ENABLED and not grid_positions.has_open_position(
+                symbol, level_index, side="short"
+            ):
+                if level_touched_on_rise(previous_price, current_price, level_price):
+                    grid_positions.open_position(symbol, level_index, level_price, now, side="short")
 
     last_summary_at = _last_grid_summary_at.get(symbol, 0.0)
     if now - last_summary_at >= config.PERP_GRID_SUMMARY_INTERVAL_SECONDS:

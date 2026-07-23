@@ -83,6 +83,48 @@ def test_no_movement_opens_nothing_on_second_poll():
     assert tracker.open_positions("BTCUSDT") == []
 
 
+def test_short_disabled_by_default_does_not_open_on_rise():
+    tracker = GridPaperTracker()
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1000.0)
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=104.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1010.0)
+    assert tracker.open_positions("BTCUSDT") == []
+
+
+def test_short_enabled_opens_on_rise_and_not_on_dip(monkeypatch):
+    monkeypatch.setattr(config, "PERP_GRID_SHORT_ENABLED", True)
+    tracker = GridPaperTracker()
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1000.0)
+
+    # 100 -> 104: 上昇中なので、ショートは開くが、ロングは開かないはず。
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=104.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1010.0)
+
+    opened = tracker.open_positions("BTCUSDT")
+    assert opened
+    assert all(p.side == "short" for p in opened)
+    assert all(100.0 <= p.entry_price <= 104.0 for p in opened)
+
+
+def test_short_enabled_long_and_short_can_open_independently(monkeypatch):
+    monkeypatch.setattr(config, "PERP_GRID_SHORT_ENABLED", True)
+    tracker = GridPaperTracker()
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=100.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1000.0)
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=96.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1010.0)
+    with patch("perp_sniper.perp_market_data.fetch_mark_price", return_value=104.0):
+        perp_sniper._process_grid_symbol("BTCUSDT", tracker, now=1020.0)
+
+    # 96で開いたロングは104への急騰で利確済みになっているはずなので、
+    # open_positions()ではなくall_positions()(決済済み含む)で両サイドの
+    # 建玉が実際に開かれたことを確認する。
+    sides = {p.side for p in tracker.all_positions("BTCUSDT")}
+    assert sides == {"long", "short"}
+
+
 def test_process_grid_symbol_close_deducts_estimated_funding_cost():
     """決済時、その建玉の保有期間について実際のファンディングレート履歴を
     取得し、コストとしてpnl_pctから差し引くこと(perp_market_data.
