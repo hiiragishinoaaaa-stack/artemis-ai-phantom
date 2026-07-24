@@ -256,6 +256,65 @@ PERP_GRID_RANGE_PCT = _env_float("PERP_GRID_RANGE_PCT", 10.0)
 PERP_GRID_COUNT = _env_int("PERP_GRID_COUNT", 100)
 PERP_GRID_TAKE_PROFIT_PCT = _env_float("PERP_GRID_TAKE_PROFIT_PCT", 0.2)
 PERP_GRID_STOP_LOSS_PCT = _env_float("PERP_GRID_STOP_LOSS_PCT", -0.1)
+
+# 銘柄ごとのTP/SL/グリッド分割数の上書き(2026-07、perp_grid_backtest_sweep.py
+# での検証結果を踏まえて追加)。上記のPERP_GRID_*は全銘柄共通の1セットだが、
+# 実際にBTCUSDT/ETHUSDT/SOLUSDTでスイープした結果、銘柄によって最適な
+# TP/SL幅がまったく違うことがわかった(BTCはSL-0.1%だとノイズで刈られやすく
+# SL-0.5%まで広げた方が良かった一方、ETH/SOLは逆にSL-0.1%のままの方が
+# 良く、グリッド分割数を300→50に減らした方がマージンも最大ドローダウンも
+# 改善した)。単純に一番合計損益が良かった組み合わせではなく、最大
+# ドローダウンが極端に大きい組み合わせ(BTCでSL-0.5%かつgrid=300だと
+# 最大DD-92%相当)は避け、値動きの荒さに対してリスクが大きすぎない
+# 組み合わせを選んでいる。
+#
+# 個別の環境変数(PERP_GRID_COUNT_BTCUSDT等)で上書きした場合はそちらが
+# 最優先。次にこの一覧(実測に基づく既定)、最後にグローバルなPERP_GRID_*
+# (上記)の順で使われる(grid_count_for_symbol等参照)。この一覧に無い
+# 銘柄は最初からグローバル既定を使う。
+PERP_GRID_SYMBOL_DEFAULTS: dict[str, dict[str, float | int]] = {
+    "BTCUSDT": {"count": 100, "take_profit_pct": 0.40, "stop_loss_pct": -0.50},
+    "ETHUSDT": {"count": 50, "take_profit_pct": 0.20, "stop_loss_pct": -0.10},
+    "SOLUSDT": {"count": 50, "take_profit_pct": 0.20, "stop_loss_pct": -0.10},
+}
+
+
+def _grid_float_for_symbol(env_base: str, symbol: str, key: str, fallback: float) -> float:
+    raw = os.getenv(f"{env_base}_{symbol}")
+    if raw is not None and raw.strip() != "":
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return float(PERP_GRID_SYMBOL_DEFAULTS.get(symbol, {}).get(key, fallback))
+
+
+def _grid_int_for_symbol(env_base: str, symbol: str, key: str, fallback: int) -> int:
+    raw = os.getenv(f"{env_base}_{symbol}")
+    if raw is not None and raw.strip() != "":
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return int(PERP_GRID_SYMBOL_DEFAULTS.get(symbol, {}).get(key, fallback))
+
+
+def grid_range_pct_for_symbol(symbol: str) -> float:
+    return _grid_float_for_symbol("PERP_GRID_RANGE_PCT", symbol, "range_pct", PERP_GRID_RANGE_PCT)
+
+
+def grid_count_for_symbol(symbol: str) -> int:
+    return _grid_int_for_symbol("PERP_GRID_COUNT", symbol, "count", PERP_GRID_COUNT)
+
+
+def grid_take_profit_pct_for_symbol(symbol: str) -> float:
+    return _grid_float_for_symbol("PERP_GRID_TAKE_PROFIT_PCT", symbol, "take_profit_pct", PERP_GRID_TAKE_PROFIT_PCT)
+
+
+def grid_stop_loss_pct_for_symbol(symbol: str) -> float:
+    return _grid_float_for_symbol("PERP_GRID_STOP_LOSS_PCT", symbol, "stop_loss_pct", PERP_GRID_STOP_LOSS_PCT)
+
+
 PERP_GRID_LEVERAGE = _env_float("PERP_GRID_LEVERAGE", 3.0)
 PERP_GRID_FEE_PCT_PER_SIDE = _env_float("PERP_GRID_FEE_PCT_PER_SIDE", 0.015)
 # trueにすると、買いグリッド(下がったら買い、戻ったら利確)に加えて

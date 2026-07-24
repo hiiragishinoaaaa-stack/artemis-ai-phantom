@@ -147,19 +147,26 @@ def _process_grid_symbol(symbol: str, grid_positions: GridPaperTracker, now: flo
     売り(ショート)グリッドも同時に動かす(「上がったら売り、戻ったら
     利確買い戻し」、level_touched_on_rise参照)。同じlevel_indexでも
     サイドが違えば別の建玉として扱う(GridPaperTracker参照)。
+
+    レンジ幅/グリッド分割数/TP/SLは銘柄ごとに異なる場合がある
+    (config.grid_*_for_symbol参照。個別の環境変数上書き→実測に基づく
+    銘柄別既定値→グローバル既定値の順で決まる)。
     """
     current_price = perp_market_data.fetch_mark_price(symbol)
     if current_price is None:
         logger.warning("perp_sniper: %sの価格取得に失敗しました(グリッド)", symbol)
         return
 
-    levels = grid_positions.get_or_init_levels(symbol, current_price, config.PERP_GRID_RANGE_PCT, config.PERP_GRID_COUNT)
+    range_pct = config.grid_range_pct_for_symbol(symbol)
+    grid_count = config.grid_count_for_symbol(symbol)
+    take_profit_pct = config.grid_take_profit_pct_for_symbol(symbol)
+    stop_loss_pct = config.grid_stop_loss_pct_for_symbol(symbol)
+
+    levels = grid_positions.get_or_init_levels(symbol, current_price, range_pct, grid_count)
 
     for position in grid_positions.open_positions(symbol):
         exit_decider = decide_grid_exit_reason_short if position.side == "short" else decide_grid_exit_reason
-        reason = exit_decider(
-            position.entry_price, current_price, config.PERP_GRID_TAKE_PROFIT_PCT, config.PERP_GRID_STOP_LOSS_PCT
-        )
+        reason = exit_decider(position.entry_price, current_price, take_profit_pct, stop_loss_pct)
         if reason is not None:
             funding_cost_pct = perp_market_data.estimate_funding_cost_pct(
                 symbol, position.opened_at, now, config.PERP_GRID_LEVERAGE
@@ -238,16 +245,22 @@ def _process_grid_symbol_live(symbol: str, tracker: "GridLiveTracker", now: floa
     check_pending_opens(tracker, now)
     check_pending_closes(tracker, now)
 
+    # レンジ幅/グリッド分割数/TP/SLは、Hyperliquid表記(hl_symbol)ではなく
+    # 元のBinance Futures表記(symbol)で銘柄別設定を引く
+    # (config.PERP_GRID_SYMBOL_DEFAULTS・PERP_SYMBOLSと表記を揃えるため)。
+    range_pct = config.grid_range_pct_for_symbol(symbol)
+    grid_count = config.grid_count_for_symbol(symbol)
+    take_profit_pct = config.grid_take_profit_pct_for_symbol(symbol)
+    stop_loss_pct = config.grid_stop_loss_pct_for_symbol(symbol)
+
     if tracker.center_price(hl_symbol) is None:
         tracker.set_center_price(hl_symbol, mid_price)
-    levels = compute_grid_levels(tracker.center_price(hl_symbol), config.PERP_GRID_RANGE_PCT, config.PERP_GRID_COUNT)
+    levels = compute_grid_levels(tracker.center_price(hl_symbol), range_pct, grid_count)
 
     # open_positions()は買いが約定済みの建玉のみ(pending_openは含まない、
     # まだ約定していない建玉に利確/損切り判定をしても意味が無いため)。
     for position in tracker.open_positions(hl_symbol):
-        reason = decide_grid_exit_reason(
-            position.entry_price, mid_price, config.PERP_GRID_TAKE_PROFIT_PCT, config.PERP_GRID_STOP_LOSS_PCT
-        )
+        reason = decide_grid_exit_reason(position.entry_price, mid_price, take_profit_pct, stop_loss_pct)
         if reason is not None:
             execute_close(tracker, position, reason, now)
 
