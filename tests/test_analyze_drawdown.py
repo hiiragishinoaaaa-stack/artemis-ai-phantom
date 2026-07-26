@@ -12,6 +12,7 @@ from analyze_drawdown import (
     load_pairs,
     naive_outcomes,
     path_checked_outcomes,
+    sweep_table,
     winner_survival,
 )
 
@@ -115,3 +116,19 @@ def test_path_check_can_flip_a_positive_expectancy_negative():
 
     assert naive == 56.0  # (400*2 - 30*8) / 10
     assert checked == -30.0
+
+
+def test_sweep_table_drops_small_buckets_but_always_keeps_the_total():
+    pairs = [_pair(f"A{i}", -5.0, 50.0, notify_mcap=20_000.0) for i in range(5)]
+    pairs += [_pair(f"B{i}", -5.0, 50.0, notify_mcap=2_000_000.0) for i in range(3)]
+
+    order, rows = sweep_table(pairs, [30.0], slippage=0.0, min_count=4)
+
+    assert order == ["$10,000〜$30,000", "全体"]
+    assert rows["全体"] == [50.0]
+
+
+def test_sweep_table_applies_slippage_to_every_stop_level():
+    pairs = [_pair("A", -90.0, -95.0)]
+    _, rows = sweep_table(pairs, [30.0, 50.0], slippage=20.0, min_count=1)
+    assert rows["全体"] == [-50.0, -70.0]

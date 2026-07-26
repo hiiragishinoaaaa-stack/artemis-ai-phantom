@@ -151,6 +151,40 @@ def _bucket(pairs: list[dict], edges: list[float]) -> tuple[dict[str, list[dict]
     return groups, labels
 
 
+def sweep_table(
+    pairs: list[dict], stops: list[float], slippage: float, min_count: int
+) -> tuple[list[str], dict[str, list[float]]]:
+    """損切り幅を振って、層ごとの30分検算EVを一覧にする。
+
+    戻り値は(行ラベル, ラベル→各損切り幅でのEV)。件数が min_count 未満の層は
+    偶然で符号が動くので落とす。
+    """
+    groups, labels = _bucket(pairs, [10_000, 30_000, 100_000, 300_000, 1_000_000])
+    rows: dict[str, list[float]] = {}
+    order: list[str] = []
+    for label in labels:
+        bucket = groups.get(label, [])
+        if len(bucket) < min_count:
+            continue
+        order.append(label)
+        rows[label] = [
+            _mean(path_checked_outcomes(bucket, stop, stop + slippage)) for stop in stops
+        ]
+    order.append("全体")
+    rows["全体"] = [_mean(path_checked_outcomes(pairs, stop, stop + slippage)) for stop in stops]
+    return order, rows
+
+
+def _print_sweep(pairs: list[dict], stops: list[float], slippage: float, min_count: int) -> None:
+    order, rows = sweep_table(pairs, stops, slippage, min_count)
+    print(f"\n=== 30分検算EV / 滑り {slippage:g}% ===")
+    header = f"{'区分':<22}" + "".join(f"{f'-{s:g}%':>10}" for s in stops)
+    print(header)
+    for label in order:
+        line = f"{label:<22}" + "".join(f"{v:>9.1f}%" for v in rows[label])
+        print(line)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="損切りEVを30分時点のデータで検算する")
     parser.add_argument("--path", default="logs/outcomes.jsonl")
@@ -165,6 +199,20 @@ def main() -> None:
         "10を指定すると、-30%%の損切りが実際には-40%%で約定したものとして計算する",
     )
     parser.add_argument("--max-mcap", type=float, default=_DEFAULT_MAX_MCAP)
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="損切り幅と滑りを総当たりして一覧にする。1回で全パターンを確認できる",
+    )
+    parser.add_argument(
+        "--stop-list", type=float, nargs="+", default=[20, 30, 40, 50, 60, 70], help="--sweep用"
+    )
+    parser.add_argument(
+        "--slippage-list", type=float, nargs="+", default=[0, 10, 20, 30], help="--sweep用"
+    )
+    parser.add_argument(
+        "--min-count", type=int, default=100, help="--sweepで表示する層の最低件数(既定100)"
+    )
     args = parser.parse_args()
 
     fill_pct = args.stop_pct + args.slippage_pct
@@ -172,6 +220,20 @@ def main() -> None:
     if not pairs:
         print(
             f"{args.path} に {args.early}秒 と {args.late}秒 が両方そろった銘柄がありませんでした。"
+        )
+        return
+
+    if args.sweep:
+        print(f"=== {args.early}秒と{args.late}秒が両方そろった銘柄: {len(pairs)}件 ===")
+        print(f"件数{args.min_count}件未満の層は偶然で符号が動くため省略")
+        for slippage in args.slippage_list:
+            _print_sweep(pairs, args.stop_list, slippage, args.min_count)
+        print(
+            "\n※縦が損切り幅、横が滑り。数字はその組み合わせでの1件あたり期待値(%)。"
+            "\n※滑りは『-30%で切ったつもりが実際は-40%で約定した』という分。ラグ中の銘柄では必ず起きる。"
+            "\n  滑り0%の列だけを見ないこと。20〜30%でも符号が保つ組み合わせだけが候補。"
+            "\n※どの損切り幅でも符号が変わらない層は、その層が本物である傍証になる。"
+            "\n  逆に、特定の1マスだけ突出している場合は偶然を拾っている。"
         )
         return
 
