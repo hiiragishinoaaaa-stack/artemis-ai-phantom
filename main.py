@@ -250,9 +250,17 @@ def _build_notification_row(
     }
 
 
-def _build_outcome_row(outcome: TrackedOutcome, checkpoint_seconds: int, change_pct: float) -> dict:
+def _build_outcome_row(
+    outcome: TrackedOutcome,
+    checkpoint_seconds: int,
+    change_pct: float | None,
+    market_cap_available: bool = True,
+) -> dict:
     """supabase_client.insert_outcome()へ渡す行を組み立てる(supabase_schema.sqlの
     outcomesテーブル参照)。ネットワーク非依存の純粋関数(tests/test_main.py参照)。
+
+    最新の時価総額を取得できなかった場合はnullで記録する。JSONL側と同じ理由で、
+    取得失敗を0や-100%で埋めない(outcome_tracker.record_and_advance参照)。
     """
     return {
         "mint": outcome.mint,
@@ -262,8 +270,8 @@ def _build_outcome_row(outcome: TrackedOutcome, checkpoint_seconds: int, change_
         "notified_score": outcome.notified_score,
         "checkpoint_seconds": checkpoint_seconds,
         "market_cap_at_notify_usd": outcome.market_cap_at_notify_usd,
-        "market_cap_now_usd": outcome.last_market_cap_usd,
-        "change_pct": round(change_pct, 2),
+        "market_cap_now_usd": outcome.last_market_cap_usd if market_cap_available else None,
+        "change_pct": None if change_pct is None else round(change_pct, 2),
     }
 
 
@@ -469,16 +477,33 @@ async def _process_outcome_checkpoint(
 ) -> None:
     """1トークン分の結果チェックポイント処理。_outcome_loopから並行起動される。"""
     pair = await asyncio.to_thread(dexscreener_client.fetch_best_pair, outcome.mint)
+    market_cap = 0.0
     if pair is not None:
         market_cap = float(pair.get("marketCap") or pair.get("fdv") or 0.0)
+    # marketCapもfdvも無いレスポンスは「取得できなかった」であって「時価総額0」
+    # ではない。0として記録すると、ちょうど-100.0%の偽のラグ記録になる
+    # (outcome_tracker.record_and_advance参照)。
+    market_cap_available = market_cap > 0
+    if market_cap_available:
         outcomes.update_market_cap(outcome.mint, market_cap)
+    else:
+        logger.warning(
+            "main: 最新の時価総額を取得できませんでした。結果は未確定として記録します mint=%s symbol=%s",
+            outcome.mint,
+            outcome.symbol,
+        )
 
     checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
-    change_pct = outcomes.record_and_advance(outcome)
+    change_pct = outcomes.record_and_advance(outcome, market_cap_available=market_cap_available)
     await asyncio.to_thread(
-        supabase_client.insert_outcome, _build_outcome_row(outcome, checkpoint_seconds, change_pct)
+        supabase_client.insert_outcome,
+        _build_outcome_row(outcome, checkpoint_seconds, change_pct, market_cap_available),
     )
-    if outcome.creator and change_pct <= config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT:
+    if (
+        outcome.creator
+        and change_pct is not None
+        and change_pct <= config.CREATOR_BLOCKLIST_CRASH_THRESHOLD_PCT
+    ):
         logger.info(
             "main: 通知後の大暴落を検出しました mint=%s symbol=%s change_pct=%.1f%%",
             outcome.mint,

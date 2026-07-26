@@ -123,21 +123,33 @@ class OutcomeTracker:
         """
         outcome.in_flight = False
 
-    def record_and_advance(self, outcome: TrackedOutcome) -> float:
+    def record_and_advance(
+        self, outcome: TrackedOutcome, market_cap_available: bool = True
+    ) -> float | None:
         """チェックポイントの結果を1件JSONLへ追記し、次のチェックポイントへ進める。
 
         通知時点からの変化率(%)を返す(呼び出し側がcreator_blocklistへの
         登録要否を判断するために使う。main.py参照)。
+
+        market_cap_available=False は「最新の時価総額を取得できなかった」の意味で、
+        この場合は変化率を計算できない。change_pct と market_cap_now_usd を
+        null で記録し、Noneを返す。
+
+        **取得失敗を数値で埋めてはいけない。** 以前は失敗時に0を入れていたため、
+        DexScreenerがmarketCapを返さなかっただけの記録が「ちょうど-100.0%」として
+        残り、集計時に本物のラグと区別できなくなっていた(analyze_buckets.py の
+        『取得失敗の疑い』欄はこの残骸を数えるためのもの)。
         """
         checkpoint_seconds = config.OUTCOME_CHECKPOINTS_SECONDS[outcome.checkpoint_index]
-        if outcome.market_cap_at_notify_usd > 0:
+        change_pct: float | None
+        if not market_cap_available or outcome.market_cap_at_notify_usd <= 0:
+            change_pct = None
+        else:
             change_pct = (
                 (outcome.last_market_cap_usd - outcome.market_cap_at_notify_usd)
                 / outcome.market_cap_at_notify_usd
                 * 100
             )
-        else:
-            change_pct = 0.0
 
         record = {
             "mint": outcome.mint,
@@ -147,8 +159,8 @@ class OutcomeTracker:
             "notified_score": outcome.notified_score,
             "checkpoint_seconds": checkpoint_seconds,
             "market_cap_at_notify_usd": outcome.market_cap_at_notify_usd,
-            "market_cap_now_usd": outcome.last_market_cap_usd,
-            "change_pct": round(change_pct, 2),
+            "market_cap_now_usd": outcome.last_market_cap_usd if market_cap_available else None,
+            "change_pct": None if change_pct is None else round(change_pct, 2),
         }
         self._append_record(record)
 

@@ -148,3 +148,24 @@ def test_build_outcome_row_matches_supabase_schema():
         "market_cap_now_usd": 15000.0,
         "change_pct": 50.0,
     }
+
+
+def test_build_outcome_row_writes_null_when_market_cap_unavailable():
+    """Supabase側もJSONL側と同じく、取得失敗を数値で埋めない。"""
+    outcome = TrackedOutcome(
+        mint="MINT1",
+        name="Test Coin",
+        symbol="TEST",
+        notified_at=1000.0,
+        notified_tier="HIGH",
+        notified_score=90,
+        market_cap_at_notify_usd=10000.0,
+        last_market_cap_usd=10000.0,
+    )
+
+    row = _build_outcome_row(
+        outcome, checkpoint_seconds=1800, change_pct=None, market_cap_available=False
+    )
+
+    assert row["market_cap_now_usd"] is None
+    assert row["change_pct"] is None

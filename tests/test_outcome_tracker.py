@@ -118,6 +118,45 @@ def test_record_and_advance_reports_large_negative_change_on_crash():
     assert outcome.creator == "CreatorAddr1"
 
 
+def test_record_and_advance_records_null_when_market_cap_unavailable():
+    """時価総額を取得できなかった記録は、0%でも-100%でもなくnullで残す。
+
+    ここを数値で埋めると、取得失敗が『ちょうど-100.0%』の偽のラグとして
+    集計に混ざる(analyze_buckets.py の『データ品質』欄を参照)。
+    """
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0, market_cap_usd=10000.0, creator="CreatorAddr1")
+
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    change_pct = tracker.record_and_advance(outcome, market_cap_available=False)
+
+    assert change_pct is None
+    assert outcome.checkpoint_index == 1
+
+    record = json.loads(config.OUTCOMES_FILE_PATH.read_text(encoding="utf-8").strip())
+    assert record["change_pct"] is None
+    assert record["market_cap_now_usd"] is None
+    assert record["market_cap_at_notify_usd"] == 10000.0
+
+
+def test_record_and_advance_records_null_when_notify_market_cap_missing():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0, market_cap_usd=0.0)
+
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    assert tracker.record_and_advance(outcome) is None
+
+
+def test_record_and_advance_still_reports_a_genuine_total_loss():
+    """本物のラグ(取得はできたが時価総額がほぼ0)は、これまで通り記録する。"""
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0, market_cap_usd=10000.0)
+    tracker.update_market_cap("MINT1", 1.0)
+
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    assert tracker.record_and_advance(outcome) == pytest.approx(-99.99)
+
+
 def test_record_and_advance_marks_finished_after_last_checkpoint():
     tracker = OutcomeTracker()
     _register(tracker, now=1000.0)
