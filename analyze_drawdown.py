@@ -23,6 +23,11 @@ analyze_buckets.py が出す「-N%損切りEV」は、負けを一定幅で打�
   .venv/bin/python analyze_drawdown.py
   .venv/bin/python analyze_drawdown.py --stop-pct 50
   .venv/bin/python analyze_drawdown.py --stop-pct 30 --slippage-pct 15
+  .venv/bin/python analyze_drawdown.py --exact      # 実測の最安値だけで確定計算
+
+なお、最安値の実測が貯まればこの推定は不要になる(--exact)。
+min_change_pct が記録されている銘柄については、損切りが発動したかどうかを
+仮定ではなく事実として判定できる(outcome_tracker.py参照)。
 """
 from __future__ import annotations
 
@@ -79,15 +84,51 @@ def load_pairs(path: str, early: int, late: int, max_mcap: float) -> tuple[list[
     for mint, records in by_mint.items():
         if early not in records or late not in records:
             continue
+        # min_change_pct は実測の最安値。記録が始まる前(2026-07以前)の分は
+        # 入っていないので、その場合はNoneのまま持ち回る。
+        min_pct = records[late].get("min_change_pct")
+        if min_pct is None:
+            min_pct = records[early].get("min_change_pct")
         pairs.append(
             {
                 "mint": mint,
                 "early_pct": records[early]["change_pct"],
                 "late_pct": records[late]["change_pct"],
                 "notify_mcap": records[late]["market_cap_at_notify_usd"],
+                "min_pct": min_pct,
+                "max_pct": records[late].get("max_change_pct"),
             }
         )
     return pairs, counts
+
+
+def rows_with_measured_low(pairs: list[dict]) -> list[dict]:
+    """最安値が実測されている記録だけを抜き出す。
+
+    安値の記録は2026-07から。それ以前に集めた分は経路が分からないので、
+    確定計算(exact_outcomes)には使えない。
+    """
+    return [p for p in pairs if p.get("min_pct") is not None]
+
+
+def exact_outcomes(rows: list[dict], stop_pct: float, fill_pct: float) -> list[float]:
+    """最安値を実測してある記録だけを使い、損切りありの成績を確定で出す。
+
+    min_change_pct は通知後に実際に観測した最安値。これが損切り幅を割って
+    いれば、そのポジションは確実に切られている。推定ではないので、
+    path_checked_outcomes のような『まだ上限の見積もり』という但し書きが
+    要らない唯一の計算。
+
+    ただし観測間隔(既定2分)より短い急落は取りこぼす。約定価格の滑りと
+    合わせて fill_pct で見ておくこと。
+    """
+    outcomes = []
+    for row in rows:
+        if row["min_pct"] <= -stop_pct:
+            outcomes.append(-fill_pct)
+        else:
+            outcomes.append(row["late_pct"])
+    return outcomes
 
 
 def naive_outcomes(pairs: list[dict], stop_pct: float, fill_pct: float) -> list[float]:
@@ -185,6 +226,20 @@ def _print_sweep(pairs: list[dict], stops: list[float], slippage: float, min_cou
         print(line)
 
 
+def _print_exact_sweep(rows: list[dict], stops: list[float], slippage: float, min_count: int) -> None:
+    groups, labels = _bucket(rows, [10_000, 30_000, 100_000, 300_000, 1_000_000])
+    print(f"\n=== 確定EV(実測の最安値ベース) / 滑り {slippage:g}% ===")
+    print(f"{'区分':<22}{'件数':>7}" + "".join(f"{f'-{s:g}%':>10}" for s in stops))
+    for label in labels + ["全体"]:
+        bucket = rows if label == "全体" else groups.get(label, [])
+        if len(bucket) < min_count and label != "全体":
+            continue
+        cells = "".join(
+            f"{_mean(exact_outcomes(bucket, stop, stop + slippage)):>9.1f}%" for stop in stops
+        )
+        print(f"{label:<22}{len(bucket):>7}{cells}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="損切りEVを30分時点のデータで検算する")
     parser.add_argument("--path", default="logs/outcomes.jsonl")
@@ -213,6 +268,12 @@ def main() -> None:
     parser.add_argument(
         "--min-count", type=int, default=100, help="--sweepで表示する層の最低件数(既定100)"
     )
+    parser.add_argument(
+        "--exact",
+        action="store_true",
+        help="実測の最安値が記録されている銘柄だけを使い、損切りありの成績を確定で出す。"
+        "推定を挟まないので、こちらに十分な件数がたまったら --sweep は用済みになる",
+    )
     args = parser.parse_args()
 
     fill_pct = args.stop_pct + args.slippage_pct
@@ -222,6 +283,31 @@ def main() -> None:
             f"{args.path} に {args.early}秒 と {args.late}秒 が両方そろった銘柄がありませんでした。"
         )
         return
+
+    measured = rows_with_measured_low(pairs)
+    if args.exact:
+        if not measured:
+            print(
+                "最安値(min_change_pct)が記録された銘柄がまだありません。"
+                "\nbotを再起動して、新しい通知が1時間分たまるまで待つこと"
+                "(記録開始前の分には経路が入っていないため、確定計算はできません)。"
+            )
+            return
+        print(f"=== 最安値まで実測できた銘柄: {len(measured)}件 / 全{len(pairs)}件 ===")
+        print("推定ではなく確定。損切りが発動したかどうかを事実として判定している")
+        for slippage in args.slippage_list:
+            _print_exact_sweep(measured, args.stop_list, slippage, args.min_count)
+        print(
+            "\n※これは推定ではない。ただし観測間隔(既定2分)より短い急落は取りこぼす。"
+            "\n※件数が少ないうちは符号が動く。数百件たまるまで結論を出さないこと。"
+        )
+        return
+
+    if measured:
+        print(
+            f"※最安値まで実測できた銘柄が{len(measured)}件たまっています。"
+            "--exact を付けると推定ではなく確定値で計算できます。"
+        )
 
     if args.sweep:
         print(f"=== {args.early}秒と{args.late}秒が両方そろった銘柄: {len(pairs)}件 ===")

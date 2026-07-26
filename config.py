@@ -379,6 +379,17 @@ PERP_GRID_LIVE_POSITIONS_FILE_PATH = (
 # logs/outcomes.jsonlへ追記する(将来、どのスコア項目が実際に有効だったか
 # 分析するため)。最後の秒数(既定24時間)を過ぎたら追跡を終了する。
 OUTCOME_CHECKPOINTS_SECONDS: tuple[int, ...] = (1800, 3600, 86400)  # 30分/1時間/24時間
+
+# チェックポイントの値だけでは「通知後どこまで下がったか」が分からないため、
+# 損切りを入れた場合の成績は推定でしか出せない。実測でも、経路を無視した
+# 推定は損切り幅を狭めるほど良く見えるという明らかに嘘の傾向を示した
+# (analyze_drawdown.pyの冒頭を参照)。そこで通知から
+# OUTCOME_EXTREMES_WINDOW_SECONDS の間だけ OUTCOME_EXTREMES_INTERVAL_SECONDS
+# ごとに時価総額を観測し、その間の最安値・最高値をoutcomes.jsonlへ残す。
+# DexScreenerは複数mintをまとめて問い合わせられるため(30件まで)、この頻度でも
+# 実際のリクエスト数はごく少ない(dexscreener_client.fetch_best_pairs参照)。
+OUTCOME_EXTREMES_INTERVAL_SECONDS = _env_int("OUTCOME_EXTREMES_INTERVAL_SECONDS", 120)
+OUTCOME_EXTREMES_WINDOW_SECONDS = _env_int("OUTCOME_EXTREMES_WINDOW_SECONDS", 3600)
 _outcomes_file_path_env = os.getenv("OUTCOMES_FILE_PATH")
 OUTCOMES_FILE_PATH = Path(_outcomes_file_path_env) if _outcomes_file_path_env else BASE_DIR / "logs" / "outcomes.jsonl"
 

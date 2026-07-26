@@ -11,7 +11,9 @@ import json
 from analyze_drawdown import (
     load_pairs,
     naive_outcomes,
+    exact_outcomes,
     path_checked_outcomes,
+    rows_with_measured_low,
     sweep_table,
     winner_survival,
 )
@@ -36,14 +38,29 @@ def _rec(mint: str, checkpoint: int, change_pct, notify_mcap=50_000.0) -> dict:
     }
 
 
-def _pair(mint: str, early: float, late: float, notify_mcap=50_000.0) -> dict:
-    return {"mint": mint, "early_pct": early, "late_pct": late, "notify_mcap": notify_mcap}
+def _pair(mint: str, early: float, late: float, notify_mcap=50_000.0, min_pct=None) -> dict:
+    return {
+        "mint": mint,
+        "early_pct": early,
+        "late_pct": late,
+        "notify_mcap": notify_mcap,
+        "min_pct": min_pct,
+    }
 
 
 def test_load_pairs_joins_both_checkpoints_of_the_same_mint(tmp_path):
     path = _write(tmp_path, [_rec("A", 1800, -10.0), _rec("A", 3600, 40.0)])
     pairs, _ = load_pairs(path, 1800, 3600, 1_000_000_000.0)
-    assert pairs == [{"mint": "A", "early_pct": -10.0, "late_pct": 40.0, "notify_mcap": 50_000.0}]
+    assert pairs == [
+        {
+            "mint": "A",
+            "early_pct": -10.0,
+            "late_pct": 40.0,
+            "notify_mcap": 50_000.0,
+            "min_pct": None,
+            "max_pct": None,
+        }
+    ]
 
 
 def test_load_pairs_skips_mints_missing_one_checkpoint(tmp_path):
@@ -132,3 +149,25 @@ def test_sweep_table_applies_slippage_to_every_stop_level():
     pairs = [_pair("A", -90.0, -95.0)]
     _, rows = sweep_table(pairs, [30.0, 50.0], slippage=20.0, min_count=1)
     assert rows["全体"] == [-50.0, -70.0]
+
+
+def test_rows_with_measured_low_keeps_only_records_that_have_a_low():
+    """安値の記録は途中から始まったので、古い記録には入っていない。"""
+    pairs = [_pair("A", -10.0, 40.0, min_pct=-55.0), _pair("B", -10.0, 40.0)]
+    assert [p["mint"] for p in rows_with_measured_low(pairs)] == ["A"]
+
+
+def test_exact_outcomes_uses_the_measured_low_not_the_checkpoints():
+    """チェックポイントでは無傷に見えても、実測の安値が切られていれば負け。
+
+    30分でも1時間でも-10%にしか見えないが、途中で-55%まで落ちていた銘柄。
+    推定(path_checked_outcomes)はこれを勝ちのまま通してしまう。
+    """
+    pairs = [_pair("A", -10.0, 300.0, min_pct=-55.0)]
+    assert path_checked_outcomes(pairs, 30.0, 30.0) == [300.0]
+    assert exact_outcomes(pairs, 30.0, 30.0) == [-30.0]
+
+
+def test_exact_outcomes_keeps_a_winner_whose_low_never_reached_the_stop():
+    pairs = [_pair("A", -10.0, 300.0, min_pct=-25.0)]
+    assert exact_outcomes(pairs, 30.0, 30.0) == [300.0]

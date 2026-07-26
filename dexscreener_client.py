@@ -72,3 +72,68 @@ def fetch_best_pair(mint: str) -> dict | None:
         return None
 
     return max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd") or 0)
+
+
+# DexScreenerのtokensエンドポイントはカンマ区切りで複数アドレスを受け付ける
+# (公式の上限は30件)。通知後の値動きを細かく追う用途では1件ずつ叩くと
+# レート制限(このエンドポイントは60req/min程度)に当たるため、必ずまとめて
+# 取得すること(outcome_tracker.pyの安値追跡を参照)。
+_MAX_BATCH_SIZE = 30
+
+
+def _best_pair_from(pairs: list, mint: str) -> dict | None:
+    """1トークン分のペア一覧から、最も流動性の高いSolanaペアを選ぶ。"""
+    candidates = [
+        p
+        for p in pairs
+        if isinstance(p, dict)
+        and p.get("chainId") == "solana"
+        and p.get("dexId") not in _EXCLUDED_DEX_IDS
+        and ((p.get("baseToken") or {}).get("address") == mint)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: (p.get("liquidity") or {}).get("usd") or 0)
+
+
+def fetch_best_pairs(mints: list[str]) -> dict[str, dict]:
+    """複数mintのペア情報をまとめて取得し、{mint: ペア} で返す。
+
+    取得できなかったmintはキーごと含めない(呼び出し側が「今回は値が
+    取れなかった」と「時価総額0」を取り違えないようにするため。
+    outcome_tracker.record_and_advanceのmarket_cap_available参照)。
+
+    fetch_best_pair()と同じくpump.funのボンディングカーブ自体のペアは
+    除外し、baseTokenが対象mintであるペアだけを見る(複数トークンを一度に
+    問い合わせると、別トークンのペアが同じ応答に混ざって返るため)。
+    """
+    results: dict[str, dict] = {}
+    for start in range(0, len(mints), _MAX_BATCH_SIZE):
+        batch = mints[start : start + _MAX_BATCH_SIZE]
+        url = f"{config.DEXSCREENER_API_BASE_URL}/latest/dex/tokens/{','.join(batch)}"
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("dexscreener_client: %d件の一括取得に失敗しました: %s", len(batch), exc)
+            continue
+        if not isinstance(data, dict):
+            continue
+        pairs = data.get("pairs") or []
+        for mint in batch:
+            pair = _best_pair_from(pairs, mint)
+            if pair is not None:
+                results[mint] = pair
+    return results
+
+
+def market_cap_of(pair: dict | None) -> float:
+    """ペアから時価総額を取り出す。取得できなければ0を返す。
+
+    marketCapもfdvも無い応答は「時価総額が0」ではなく「取得できなかった」。
+    呼び出し側は必ず 0 を『値なし』として扱うこと(main.py参照)。
+    """
+    if not pair:
+        return 0.0
+    return float(pair.get("marketCap") or pair.get("fdv") or 0.0)

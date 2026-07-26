@@ -485,7 +485,7 @@ async def _process_outcome_checkpoint(
     # (outcome_tracker.record_and_advance参照)。
     market_cap_available = market_cap > 0
     if market_cap_available:
-        outcomes.update_market_cap(outcome.mint, market_cap)
+        outcomes.update_market_cap(outcome.mint, market_cap, now=time.time())
     else:
         logger.warning(
             "main: 最新の時価総額を取得できませんでした。結果は未確定として記録します mint=%s symbol=%s",
@@ -542,6 +542,39 @@ async def _outcome_loop(outcomes: OutcomeTracker, blocklist: CreatorBlocklist) -
             for outcome in due_outcomes:
                 outcomes.mark_in_flight(outcome)
             await asyncio.gather(*(_run_bounded(outcome) for outcome in due_outcomes))
+
+
+async def _extremes_loop(outcomes: OutcomeTracker) -> None:
+    """通知直後の値動きを細かく観測し、最安値・最高値を記録し続ける。
+
+    チェックポイント(30分/1時間)の値だけでは、その間にどこまで下がったかが
+    分からない。損切りを入れた場合の成績を推定ではなく実測で出すために、
+    通知後しばらくの間だけ短い間隔で時価総額を取り直す(config参照)。
+
+    DexScreenerのレート制限を無駄に使わないよう、対象を1回のリクエストに
+    まとめて問い合わせる。_outcome_loopが記録する値そのものには触れず、
+    最安値・最高値の更新だけを行う。
+    """
+    while True:
+        await asyncio.sleep(config.OUTCOME_EXTREMES_INTERVAL_SECONDS)
+        now = time.time()
+        due = outcomes.due_for_extremes_poll(
+            now,
+            config.OUTCOME_EXTREMES_INTERVAL_SECONDS,
+            config.OUTCOME_EXTREMES_WINDOW_SECONDS,
+        )
+        if not due:
+            continue
+        pairs = await asyncio.to_thread(
+            dexscreener_client.fetch_best_pairs, [outcome.mint for outcome in due]
+        )
+        for outcome in due:
+            market_cap = dexscreener_client.market_cap_of(pairs.get(outcome.mint))
+            # 取得できなかったmintはlast_polled_atも更新しない。次の周回で
+            # すぐ再挑戦させるため(0を安値として取り込まないのは
+            # outcome_tracker.update_market_cap側で担保している)。
+            if market_cap > 0:
+                outcomes.update_market_cap(outcome.mint, market_cap, now=now)
 
 
 async def _stats_loop(stats: DailyStats) -> None:
@@ -601,6 +634,7 @@ async def async_main() -> None:
         _consume_loop(client, watcher, recent_names, name_history),
         _checkpoint_loop(watcher, outcomes, stats, blocklist, positions),
         _outcome_loop(outcomes, blocklist),
+        _extremes_loop(outcomes),
         _stats_loop(stats),
         _position_monitor_loop(positions),
     )

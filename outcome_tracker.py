@@ -42,6 +42,14 @@ class TrackedOutcome:
     # 大暴落を検出した際にcreator_blocklistへ登録するために使う
     # (main.py参照)。
     creator: str = ""
+    # 通知後に観測した時価総額の最安値・最高値。チェックポイントの値だけでは
+    # 「途中でどこまで下がったか」が分からず、損切りを入れた場合の成績を
+    # 推定でしか出せない(analyze_drawdown.py参照)。これを記録しておくと
+    # 「-N%で切っていたら約定したか」が推定ではなく確定で分かる。
+    # 初期値は通知時点の時価総額(まだ一度も観測していない状態)。
+    min_market_cap_usd: float = 0.0
+    max_market_cap_usd: float = 0.0
+    last_polled_at: float = 0.0
     checkpoint_index: int = 0
     finished: bool = False
     # main.pyが並行処理中に、同じチェックポイントを二重処理しないための
@@ -89,13 +97,45 @@ class OutcomeTracker:
             market_cap_at_notify_usd=market_cap_usd,
             last_market_cap_usd=market_cap_usd,
             creator=creator,
+            min_market_cap_usd=market_cap_usd,
+            max_market_cap_usd=market_cap_usd,
+            last_polled_at=now,
         )
 
-    def update_market_cap(self, mint: str, market_cap_usd: float) -> None:
-        """DexScreenerから取得し直した最新の時価総額を反映する。"""
+    def update_market_cap(self, mint: str, market_cap_usd: float, now: float = 0.0) -> None:
+        """DexScreenerから取得し直した最新の時価総額を反映する。
+
+        最新値だけでなく、観測した中での最安値・最高値も更新する。
+        market_cap_usd が0以下(取得失敗)の場合は何も更新しない。0を安値と
+        して取り込むと、取得失敗が「-100%まで落ちた」という記録に化ける。
+        """
         outcome = self._outcomes.get(mint)
-        if outcome is not None:
-            outcome.last_market_cap_usd = market_cap_usd
+        if outcome is None or market_cap_usd <= 0:
+            return
+        outcome.last_market_cap_usd = market_cap_usd
+        if outcome.min_market_cap_usd <= 0 or market_cap_usd < outcome.min_market_cap_usd:
+            outcome.min_market_cap_usd = market_cap_usd
+        if market_cap_usd > outcome.max_market_cap_usd:
+            outcome.max_market_cap_usd = market_cap_usd
+        if now:
+            outcome.last_polled_at = now
+
+    def due_for_extremes_poll(self, now: float, interval: float, window: float) -> list[TrackedOutcome]:
+        """安値・高値の追跡のために、そろそろ値を取り直したい対象を返す。
+
+        通知から window 秒の間だけ、interval 秒ごとに観測する。損切りの判定に
+        必要なのは通知直後の急落なので、24時間の追跡全体を細かく叩く必要は
+        ない(DexScreenerのレート制限を無駄に使わないため)。
+        """
+        due = []
+        for outcome in self._outcomes.values():
+            if outcome.finished or outcome.in_flight:
+                continue
+            if now - outcome.notified_at > window:
+                continue
+            if now - outcome.last_polled_at >= interval:
+                due.append(outcome)
+        return due
 
     def due_for_checkpoint(self, now: float) -> list[TrackedOutcome]:
         """次の結果チェックポイント時刻を過ぎ、現在処理中でもない追跡対象の
@@ -161,6 +201,10 @@ class OutcomeTracker:
             "market_cap_at_notify_usd": outcome.market_cap_at_notify_usd,
             "market_cap_now_usd": outcome.last_market_cap_usd if market_cap_available else None,
             "change_pct": None if change_pct is None else round(change_pct, 2),
+            # 通知後にどこまで下げ、どこまで上げたか。損切り・利確を入れた
+            # 場合の成績を推定ではなく確定で計算するために残す。
+            "min_change_pct": self._extreme_pct(outcome, outcome.min_market_cap_usd),
+            "max_change_pct": self._extreme_pct(outcome, outcome.max_market_cap_usd),
         }
         self._append_record(record)
 
@@ -169,6 +213,18 @@ class OutcomeTracker:
             outcome.finished = True
 
         return change_pct
+
+    @staticmethod
+    def _extreme_pct(outcome: TrackedOutcome, market_cap_usd: float) -> float | None:
+        """安値/高値を通知時点からの変化率(%)に直す。観測が無ければNone。"""
+        if outcome.market_cap_at_notify_usd <= 0 or market_cap_usd <= 0:
+            return None
+        return round(
+            (market_cap_usd - outcome.market_cap_at_notify_usd)
+            / outcome.market_cap_at_notify_usd
+            * 100,
+            2,
+        )
 
     def forget(self, mint: str) -> None:
         self._outcomes.pop(mint, None)

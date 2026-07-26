@@ -174,3 +174,67 @@ def test_forget_removes_outcome():
     tracker.forget("MINT1")
     assert tracker.is_tracking("MINT1") is False
     assert len(tracker) == 0
+
+
+def test_update_market_cap_tracks_the_low_and_high_water_marks():
+    """通知後どこまで下げ、どこまで上げたかを覚えておく。
+
+    チェックポイントの値だけでは経路が分からず、損切りを入れた場合の
+    成績を推定でしか出せない(analyze_drawdown.py参照)。
+    """
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0, market_cap_usd=10000.0)
+
+    tracker.update_market_cap("MINT1", 4000.0, now=1100.0)  # -60%
+    tracker.update_market_cap("MINT1", 30000.0, now=1200.0)  # +200%
+    tracker.update_market_cap("MINT1", 15000.0, now=1300.0)  # +50%で着地
+
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    tracker.record_and_advance(outcome)
+
+    record = json.loads(config.OUTCOMES_FILE_PATH.read_text(encoding="utf-8").strip())
+    assert record["change_pct"] == pytest.approx(50.0)
+    assert record["min_change_pct"] == pytest.approx(-60.0)
+    assert record["max_change_pct"] == pytest.approx(200.0)
+
+
+def test_update_market_cap_ignores_zero_so_a_failed_fetch_is_not_a_new_low():
+    """取得失敗の0を安値として取り込むと『-100%まで落ちた』に化ける。"""
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0, market_cap_usd=10000.0)
+
+    tracker.update_market_cap("MINT1", 8000.0, now=1100.0)
+    tracker.update_market_cap("MINT1", 0.0, now=1200.0)
+
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    tracker.record_and_advance(outcome)
+
+    record = json.loads(config.OUTCOMES_FILE_PATH.read_text(encoding="utf-8").strip())
+    assert record["min_change_pct"] == pytest.approx(-20.0)
+    assert record["change_pct"] == pytest.approx(-20.0)
+
+
+def test_due_for_extremes_poll_respects_the_interval():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0)
+
+    assert tracker.due_for_extremes_poll(now=1050.0, interval=120.0, window=3600.0) == []
+    due = tracker.due_for_extremes_poll(now=1120.0, interval=120.0, window=3600.0)
+    assert [o.mint for o in due] == ["MINT1"]
+
+
+def test_due_for_extremes_poll_stops_after_the_window():
+    """観測を細かくやるのは通知直後だけ。24時間ずっと叩く必要はない。"""
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0)
+
+    assert tracker.due_for_extremes_poll(now=1000.0 + 3601, interval=120.0, window=3600.0) == []
+
+
+def test_due_for_extremes_poll_excludes_in_flight_outcomes():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0)
+    outcome = tracker._outcomes["MINT1"]
+    tracker.mark_in_flight(outcome)
+
+    assert tracker.due_for_extremes_poll(now=1500.0, interval=120.0, window=3600.0) == []
