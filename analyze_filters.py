@@ -86,11 +86,45 @@ def build_filters() -> list[tuple[str, Callable[[dict], bool]]]:
     ]
 
 
+def win_median(rows: list[dict]) -> float:
+    """勝った側だけの中央値。伸びしろの代表値。"""
+    wins = [r["change_pct"] for r in rows if r["change_pct"] > 0]
+    return statistics.median(wins) if wins else 0.0
+
+
+def loss_median(rows: list[dict]) -> float:
+    """負けた側だけの中央値(マイナス)。1回の負けで失う代表値。"""
+    losses = [r["change_pct"] for r in rows if r["change_pct"] <= 0]
+    return statistics.median(losses) if losses else 0.0
+
+
+def required_win_rate(rows: list[dict]) -> float:
+    """収支が±0になるのに必要な勝率(%)。
+
+    勝ち中央値と負け中央値の大きさから計算する。平均ではなく中央値を使うのは、
+    平均が外れ値1件で壊れるため(実測で1件が全体平均を-20%から+5195%へ動かした)。
+
+    そのぶん**大穴の1件を勘定に入れない厳しめの基準**になる。ここを実際の勝率が
+    上回っていれば、宝くじが当たらなくても成立するということ。
+    """
+    w = win_median(rows)
+    l = abs(loss_median(rows))
+    if w + l <= 0:
+        return 0.0
+    return l / (w + l) * 100
+
+
 def evaluate(
     rows: list[dict], first_half: list[dict], second_half: list[dict],
     predicate: Callable[[dict], bool], baseline_win: float,
 ) -> dict:
-    """1つの条件について、全体と前半・後半の成績をまとめる。"""
+    """1つの条件について、全体と前半・後半の成績をまとめる。
+
+    前半・後半は**それぞれ自分の半分の基準勝率**と比べる。全体の基準と比べると、
+    相場そのものが悪化した期間に測った側が不当に不利になる(実測で基準勝率が
+    前半24.8%→後半19.3%と落ちていた)。見たいのは「相場が良かったか」ではなく
+    「同じ時期の他の通知より良かったか」。
+    """
     kept = [r for r in rows if predicate(r)]
     kept_first = [r for r in first_half if predicate(r)]
     kept_second = [r for r in second_half if predicate(r)]
@@ -98,8 +132,8 @@ def evaluate(
     enough = len(kept_first) >= _MIN_HALF_COUNT and len(kept_second) >= _MIN_HALF_COUNT
     replicated = (
         enough
-        and win_rate(kept_first) > baseline_win
-        and win_rate(kept_second) > baseline_win
+        and win_rate(kept_first) > win_rate(first_half)
+        and win_rate(kept_second) > win_rate(second_half)
     )
     return {
         "count": len(kept),
@@ -110,6 +144,9 @@ def evaluate(
         "second": win_rate(kept_second),
         "first_count": len(kept_first),
         "second_count": len(kept_second),
+        "win_median": win_median(kept),
+        "loss_median": loss_median(kept),
+        "required": required_win_rate(kept),
         "enough": enough,
         "replicated": replicated,
     }
@@ -145,28 +182,42 @@ def main() -> None:
     print(f"=== 通知条件の比較({args.checkpoint}秒後 / {len(rows)}件) ===")
     print("数えただけの生の数字。損切りの想定は一切入っていない\n")
     print(
-        f"{'条件':<26}{'件数':>7}{'中央値':>9}{'勝率':>8}{'基準比':>9}"
-        f"{'前半':>8}{'後半':>8}{'判定':>8}"
+        f"{'条件':<26}{'件数':>7}{'勝率':>8}{'基準比':>9}{'前半':>8}{'後半':>8}{'判定':>8}"
     )
     print(
-        f"{'全体(基準)':<26}{len(rows):>7}{median_change(rows):>8.1f}%{baseline_win:>7.1f}%"
+        f"{'全体(基準)':<26}{len(rows):>7}{baseline_win:>7.1f}%"
         f"{'-':>9}{win_rate(first_half):>7.1f}%{win_rate(second_half):>7.1f}%{'-':>8}"
     )
-    print("-" * 84)
+    print(f"{'(各半分の基準)':<26}{'':>7}{'':>8}{'':>9}"
+          f"{win_rate(first_half):>7.1f}%{win_rate(second_half):>7.1f}%{'':>8}")
+    print("-" * 74)
 
     best: tuple[float, str, dict] | None = None
+    evaluated: list[tuple[str, dict, str]] = []
     for label, predicate in build_filters():
         result = evaluate(rows, first_half, second_half, predicate, baseline_win)
         if not result["count"]:
             continue
         verdict = _verdict(result, baseline_win)
+        evaluated.append((label, result, verdict))
         lift = result["win_rate"] - baseline_win
         print(
-            f"{label:<26}{result['count']:>7}{result['median']:>8.1f}%{result['win_rate']:>7.1f}%"
+            f"{label:<26}{result['count']:>7}{result['win_rate']:>7.1f}%"
             f"{lift:>+8.1f}p{result['first']:>7.1f}%{result['second']:>7.1f}%{verdict:>8}"
         )
         if verdict in ("○", "◎") and (best is None or result["win_rate"] > best[0]):
             best = (result["win_rate"], label, result)
+
+    print("\n=== 勝率だけでは足りない: 収支が成立するか ===")
+    print(f"{'条件':<26}{'勝率':>8}{'勝ち中央値':>12}{'負け中央値':>12}{'必要勝率':>10}{'収支':>8}")
+    for label, result, verdict in evaluated:
+        if verdict not in ("○", "◎"):
+            continue
+        ok = "○" if result["win_rate"] > result["required"] else "×"
+        print(
+            f"{label:<26}{result['win_rate']:>7.1f}%{result['win_median']:>11.1f}%"
+            f"{result['loss_median']:>11.1f}%{result['required']:>9.1f}%{ok:>8}"
+        )
 
     print(
         "\n※『基準比』は全体の勝率からの差(パーセントポイント)。"
@@ -177,6 +228,13 @@ def main() -> None:
         f"\n  ×=片方が基準以下(採用しない) / 件数不足=前半か後半が{_MIN_HALF_COUNT}件未満"
         "\n※中央値がマイナスでも問題ない。1時間持ちっぱなしの結果であって、"
         "\n  実際には勝った側だけ伸ばして負けを切る運用になるため。見るのは勝率。"
+    )
+    print(
+        "\n※『必要勝率』は、勝ち中央値と負け中央値だけで収支が±0になる勝率。"
+        "\n  実際の勝率がこれを上回っていれば、大穴が当たらなくても成立する。"
+        "\n  平均ではなく中央値で計算しているので、**大穴を勘定に入れない厳しめの基準**。"
+        "\n※『収支』が × の条件は、勝率が上がっていても勝ち幅が足りていない。"
+        "\n  その場合は通知条件ではなく、**出口(損切り・利確)を作らないと成立しない**。"
     )
     if counts["zero_now"]:
         print(f"※現在時価総額がちょうど0の記録が{counts['zero_now']}件含まれている。")

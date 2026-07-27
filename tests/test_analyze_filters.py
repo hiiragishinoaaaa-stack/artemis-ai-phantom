@@ -6,7 +6,16 @@
 """
 from __future__ import annotations
 
-from analyze_filters import evaluate, median_change, win_rate, win_rate_stderr, _verdict
+from analyze_filters import (
+    evaluate,
+    loss_median,
+    median_change,
+    required_win_rate,
+    win_median,
+    win_rate,
+    win_rate_stderr,
+    _verdict,
+)
 
 
 def _rec(change_pct: float, score: int = 80, mcap: float = 50_000.0) -> dict:
@@ -37,13 +46,16 @@ def test_win_rate_stderr_shrinks_as_the_sample_grows():
 
 
 def test_a_filter_that_works_in_both_halves_is_accepted():
-    first = _rows(20, 30, score=100)
-    second = _rows(21, 29, score=100)
+    # 各半分には、条件に当たらない通知も混ぜる(そうしないと条件とその半分の
+    # 基準が同じものになり、比較が成立しない)。
+    first = _rows(5, 45) + _rows(20, 30, score=100)
+    second = _rows(5, 45) + _rows(21, 29, score=100)
     rows = first + second
-    result = evaluate(rows, first, second, lambda r: r["notified_score"] >= 100, baseline_win=20.0)
+    baseline = win_rate(rows)
+    result = evaluate(rows, first, second, lambda r: r["notified_score"] >= 100, baseline)
 
     assert result["replicated"] is True
-    assert _verdict(result, 20.0) in ("○", "◎")
+    assert _verdict(result, baseline) in ("○", "◎")
 
 
 def test_a_filter_that_only_works_in_one_half_is_rejected():
@@ -75,16 +87,18 @@ def test_a_thin_filter_is_not_judged_at_all():
 
 
 def test_a_large_lift_is_marked_more_strongly_than_a_small_one():
-    big_first, big_second = _rows(30, 20), _rows(31, 19)
-    big = evaluate(big_first + big_second, big_first, big_second, lambda r: True, baseline_win=20.0)
+    def _measure(kept_wins: int, kept_losses: int, other_wins: int, other_losses: int) -> tuple:
+        half = _rows(other_wins, other_losses) + _rows(kept_wins, kept_losses, score=100)
+        rows = half + half
+        baseline = win_rate(rows)
+        result = evaluate(rows, half, half, lambda r: r["notified_score"] >= 100, baseline)
+        return result, baseline
 
-    small_first, small_second = _rows(11, 39), _rows(11, 39)
-    small = evaluate(
-        small_first + small_second, small_first, small_second, lambda r: True, baseline_win=20.0
-    )
+    big, big_baseline = _measure(30, 70, 10, 190)  # 条件30% / 基準13.3%
+    small, small_baseline = _measure(7, 38, 8, 92)  # 条件15.6% / 基準10.3%
 
-    assert _verdict(big, 20.0) == "◎"
-    assert _verdict(small, 20.0) == "○"
+    assert _verdict(big, big_baseline) == "◎"
+    assert _verdict(small, small_baseline) == "○"
 
 
 def test_a_filter_matching_nothing_reports_zero_rather_than_crashing():
@@ -92,3 +106,63 @@ def test_a_filter_matching_nothing_reports_zero_rather_than_crashing():
     result = evaluate(rows, rows[:5], rows[5:], lambda r: False, baseline_win=20.0)
     assert result["count"] == 0
     assert result["enough"] is False
+
+
+def test_each_half_is_compared_against_its_own_baseline():
+    """相場自体が悪化した期間を、条件のせいにしない。
+
+    後半は全体が沈んでいる。条件は後半でも「同じ時期の他より上」なのに、
+    全体の基準と比べると下に見えてしまう。
+    """
+    first_other = _rows(30, 70)  # 前半の基準 30%
+    second_other = _rows(10, 90)  # 後半の基準 10%
+    first_kept = _rows(20, 30, score=100)  # 40% > 30%
+    second_kept = _rows(8, 42, score=100)  # 16% > 10%(全体基準20%は下回る)
+
+    first = first_other + first_kept
+    second = second_other + second_kept
+    rows = first + second
+    baseline = win_rate(rows)
+
+    result = evaluate(rows, first, second, lambda r: r["notified_score"] >= 100, baseline)
+
+    assert result["second"] < baseline  # 全体基準と比べたら負けている
+    assert result["replicated"] is True  # それでも同時期の他よりは上
+
+
+def test_a_filter_below_its_own_half_baseline_is_still_rejected():
+    """対照(効かない条件)は、基準の変え方に関係なく落ちること。"""
+    first_other, second_other = _rows(30, 70), _rows(10, 90)
+    first_kept = _rows(20, 30, score=100)  # 40% > 30%
+    second_kept = _rows(4, 46, score=100)  # 8% < 10%
+
+    first = first_other + first_kept
+    second = second_other + second_kept
+    rows = first + second
+
+    result = evaluate(rows, first, second, lambda r: r["notified_score"] >= 100, win_rate(rows))
+    assert result["replicated"] is False
+
+
+def test_required_win_rate_reflects_how_far_winners_run():
+    """負けが-90%で勝ちが+90%なら、収支±0には50%の勝率が要る。"""
+    rows = [_rec(90.0), _rec(-90.0)]
+    assert required_win_rate(rows) == 50.0
+
+    # 勝ちが3倍に伸びるなら、必要な勝率は25%まで下がる
+    rows = [_rec(270.0), _rec(-90.0)]
+    assert required_win_rate(rows) == 25.0
+
+
+def test_required_win_rate_uses_medians_so_one_moonshot_cannot_move_it():
+    """大穴1件で必要勝率が下がってしまうと、成立していない条件を通してしまう。"""
+    base = [_rec(50.0), _rec(50.0), _rec(-90.0), _rec(-90.0)]
+    with_moonshot = base + [_rec(100000.0)]
+
+    assert required_win_rate(with_moonshot) == required_win_rate(base)
+
+
+def test_win_and_loss_medians_split_the_two_sides():
+    rows = [_rec(10.0), _rec(90.0), _rec(-50.0), _rec(-90.0)]
+    assert win_median(rows) == 50.0
+    assert loss_median(rows) == -70.0
