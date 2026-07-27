@@ -136,6 +136,22 @@ def notify_score_update(
     _send(content, config.DISCORD_WEBHOOK_URL, components=components)
     if score.total >= 100 and config.DISCORD_PERFECT_SCORE_WEBHOOK_URL:
         _send(content, config.DISCORD_PERFECT_SCORE_WEBHOOK_URL, components=components)
+    if is_trade_candidate(token, score.total) and config.DISCORD_CANDIDATE_WEBHOOK_URL:
+        _send(content, config.DISCORD_CANDIDATE_WEBHOOK_URL, components=components)
+
+
+def is_trade_candidate(token: TrackedToken, score_total: int) -> bool:
+    """実測で成績が良かった条件に当たるか。
+
+    通知を絞るためのものではない(通知は今まで通り全部出す。絞ると、絞った
+    層のデータが二度と集まらなくなる)。目で見て確かめるための目印。
+
+    条件と根拠は config.TRADE_CANDIDATE_* を参照。**買い推奨ではない。**
+    """
+    return (
+        token.market_cap_usd >= config.TRADE_CANDIDATE_MIN_MARKET_CAP_USD
+        and score_total >= config.TRADE_CANDIDATE_MIN_SCORE
+    )
 
 
 def _build_message(token: TrackedToken, score_total: int) -> str:
@@ -147,6 +163,10 @@ def _build_message(token: TrackedToken, score_total: int) -> str:
     holder_badge = _holder_concentration_badge(token.top10_holders_pct)
     if holder_badge:
         score_line_parts.append(holder_badge)
+    if is_trade_candidate(token, score_total):
+        # 実測で成績が良かった条件に当たるものだけに付く目印。
+        score_line_parts.append(config.DISCORD_CANDIDATE_EMOJI)
+
     lines = [" ".join(score_line_parts)]
 
     if token.duplicate_name_reason:

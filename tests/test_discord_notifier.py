@@ -9,7 +9,7 @@ import pytest
 import config
 import discord_notifier
 import scoring
-from token_watcher import TokenWatcher
+from token_watcher import TokenWatcher, TrackedToken
 
 
 @pytest.fixture(autouse=True)
@@ -436,3 +436,66 @@ def test_notify_omits_social_badges_when_no_socials_detected(monkeypatch):
         content = _sent_content(mock_urlopen)
         assert "🐦" not in content
         assert "✈️" not in content
+
+
+def _candidate_token(market_cap_usd: float) -> TrackedToken:
+    token = TrackedToken(mint="MINT1", name="Test", symbol="TST", migrated_at=0.0)
+    token.market_cap_usd = market_cap_usd
+    return token
+
+
+def test_is_trade_candidate_requires_both_market_cap_and_score():
+    """実測で成績が良かったのは『$1M以上 かつ スコア100』。片方だけでは足りない。"""
+    assert discord_notifier.is_trade_candidate(_candidate_token(2_000_000.0), 100) is True
+    assert discord_notifier.is_trade_candidate(_candidate_token(2_000_000.0), 95) is False
+    assert discord_notifier.is_trade_candidate(_candidate_token(500_000.0), 100) is False
+
+
+def test_is_trade_candidate_excludes_the_hundred_thousand_band():
+    """$100k〜$300kは勝率こそ近いが、損切りを入れると滑り20%でマイナスだった。"""
+    assert discord_notifier.is_trade_candidate(_candidate_token(200_000.0), 100) is False
+
+
+def test_candidate_marker_appears_only_on_candidates(monkeypatch):
+    monkeypatch.setattr(config, "DISCORD_CANDIDATE_EMOJI", "🎯")
+    hit = discord_notifier._build_message(_candidate_token(2_000_000.0), 100)
+    miss = discord_notifier._build_message(_candidate_token(50_000.0), 100)
+    assert "🎯" in hit
+    assert "🎯" not in miss
+
+
+def test_candidate_webhook_is_optional(monkeypatch):
+    """専用チャンネル未設定でも、通常の通知は今まで通り出る。"""
+    sent: list[str] = []
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://example.invalid/normal")
+    monkeypatch.setattr(config, "DISCORD_PERFECT_SCORE_WEBHOOK_URL", "")
+    monkeypatch.setattr(config, "DISCORD_CANDIDATE_WEBHOOK_URL", "")
+    monkeypatch.setattr(
+        discord_notifier, "_send", lambda content, url, components=None: sent.append(url)
+    )
+
+    discord_notifier.notify_score_update(
+        _candidate_token(2_000_000.0), _score(100), "HIGH", elapsed_seconds=60
+    )
+    assert sent == ["https://example.invalid/normal"]
+
+
+def test_candidate_webhook_receives_a_copy_when_configured(monkeypatch):
+    sent: list[str] = []
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://example.invalid/normal")
+    monkeypatch.setattr(config, "DISCORD_PERFECT_SCORE_WEBHOOK_URL", "")
+    monkeypatch.setattr(config, "DISCORD_CANDIDATE_WEBHOOK_URL", "https://example.invalid/cand")
+    monkeypatch.setattr(
+        discord_notifier, "_send", lambda content, url, components=None: sent.append(url)
+    )
+
+    discord_notifier.notify_score_update(
+        _candidate_token(2_000_000.0), _score(100), "HIGH", elapsed_seconds=60
+    )
+    assert sent == ["https://example.invalid/normal", "https://example.invalid/cand"]
+
+    sent.clear()
+    discord_notifier.notify_score_update(
+        _candidate_token(50_000.0), _score(100), "HIGH", elapsed_seconds=60
+    )
+    assert sent == ["https://example.invalid/normal"]  # 候補でなければ送らない

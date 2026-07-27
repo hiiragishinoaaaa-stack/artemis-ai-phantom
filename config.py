@@ -141,6 +141,25 @@ HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 75)
 WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 70)
 LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 35)
 
+# --- 実測にもとづく「候補」の目印(discord_notifier.py) ---
+# 通知そのものは今まで通り全部出す(データ収集を止めないため)。そのうえで、
+# 実測で成績が良かった条件に当たるものだけに目印を付ける。
+#
+# 根拠(RESEARCH_FINDINGS.md 確定事項1〜3):
+#   - 通知時の時価総額$1,000,000以上は、独立した3つの測り方すべてで最良だった
+#     (勝率40.3% / 収支まで最短 / 損切り込みで滑り30%でもプラス)
+#   - $100,000〜$300,000は勝率こそ近いが勝ち幅が足りず、滑り20%で既にマイナス
+#   - スコア100点は全体の1.8倍の勝率(前半36.6% / 後半25.5%で再現)
+#
+# **これは「買え」という意味ではない。** 件数がまだ少なく(n=61)符号は確定して
+# いない。実物を目で見て確かめるための目印。
+TRADE_CANDIDATE_MIN_MARKET_CAP_USD = _env_float("TRADE_CANDIDATE_MIN_MARKET_CAP_USD", 1_000_000.0)
+TRADE_CANDIDATE_MIN_SCORE = _env_int("TRADE_CANDIDATE_MIN_SCORE", 100)
+# 候補だけを流す専用チャンネルのWebhook URL(任意。未設定なら通常チャンネルに
+# 目印付きで出るだけ)。
+DISCORD_CANDIDATE_WEBHOOK_URL = os.getenv("DISCORD_CANDIDATE_WEBHOOK_URL", "")
+DISCORD_CANDIDATE_EMOJI = os.getenv("DISCORD_CANDIDATE_EMOJI", "🎯")
+
 # --- 発行者ブラックリスト(creator_blocklist.py) ---
 # RugCheckで危険判定が出た、または通知後に大暴落したトークンの発行者
 # ウォレットアドレスを記録し、次回以降は名前を変えて再発行されても即座に
