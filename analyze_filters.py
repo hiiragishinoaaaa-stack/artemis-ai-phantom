@@ -67,6 +67,20 @@ def _score(record: dict) -> int:
     return int(record.get("notified_score") or 0)
 
 
+def _max_stars(record: dict) -> int:
+    """観察中に到達した最大の★の数(直近5分のユニーク買い手数)。
+
+    2026-07-27より前の記録には入っていない(その場合0扱いになるので、
+    ★の条件は件数不足として判定されない)。
+    """
+    return int(record.get("max_star_count") or 0)
+
+
+def _elapsed(record: dict) -> int:
+    """通知した時点で、DEX卒業から何秒経っていたか。同上、古い記録には無い。"""
+    return int(record.get("notified_elapsed_seconds") or 0)
+
+
 def build_filters() -> list[tuple[str, Callable[[dict], bool]]]:
     """比較する条件の一覧。
 
@@ -82,6 +96,15 @@ def build_filters() -> list[tuple[str, Callable[[dict], bool]]]:
         ("スコア100 かつ $100k以上", lambda r: _score(r) >= 100 and _mcap(r) >= 100_000),
         ("スコア100 かつ $1M以上", lambda r: _score(r) >= 100 and _mcap(r) >= 1_000_000),
         ("$30k〜$100kを除外", lambda r: not (30_000 <= _mcap(r) < 100_000)),
+        # 追い通知(★が後から付いた)の成績。追い通知は結果記録を作らないため、
+        # 最大★を持ち回って初めて測れるようになった条件(outcome_tracker参照)。
+        ("★1つ以上に到達", lambda r: _max_stars(r) >= 1),
+        ("★2つ以上に到達", lambda r: _max_stars(r) >= 2),
+        ("★3つに到達", lambda r: _max_stars(r) >= 3),
+        # 通知時の時価総額$1M超は「大きい」ではなく「短時間で急騰した」を意味する。
+        # 規模と速さのどちらが効いているかを分けるための条件。
+        ("卒業60秒以内に通知", lambda r: 0 < _elapsed(r) <= 60),
+        ("$1M以上 かつ 60秒以内", lambda r: _mcap(r) >= 1_000_000 and 0 < _elapsed(r) <= 60),
         ("Tier HIGHのみ(対照)", lambda r: str(r.get("notified_tier") or "") == "HIGH"),
     ]
 

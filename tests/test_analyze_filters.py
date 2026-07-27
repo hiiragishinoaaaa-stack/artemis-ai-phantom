@@ -189,3 +189,29 @@ def test_breakeven_loss_matches_the_required_win_rate_view():
 
 def test_breakeven_loss_is_zero_when_nothing_ever_wins():
     assert breakeven_loss([_rec(-90.0), _rec(-80.0)]) == 0.0
+
+
+def test_star_and_speed_filters_are_ignored_on_records_that_predate_them():
+    """古い記録には★も経過秒数も無い。0扱いになり、条件に当たらないだけで落ちない。"""
+    from analyze_filters import _elapsed, _max_stars
+
+    old = {"change_pct": 10.0, "notified_score": 100, "market_cap_at_notify_usd": 5_000_000.0}
+    assert _max_stars(old) == 0
+    assert _elapsed(old) == 0
+
+
+def test_star_and_speed_filters_read_the_new_fields():
+    from analyze_filters import _elapsed, _max_stars
+
+    fresh = {"max_star_count": 3, "notified_elapsed_seconds": 60}
+    assert _max_stars(fresh) == 3
+    assert _elapsed(fresh) == 60
+
+
+def test_build_filters_includes_the_star_and_speed_conditions():
+    from analyze_filters import build_filters
+
+    labels = [label for label, _ in build_filters()]
+    assert "★1つ以上に到達" in labels
+    assert "卒業60秒以内に通知" in labels
+    assert "$1M以上 かつ 60秒以内" in labels

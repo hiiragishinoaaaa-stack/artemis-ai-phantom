@@ -50,6 +50,16 @@ class TrackedOutcome:
     # 急騰したトークン**」を意味する。効いているのが**規模**なのか**上がる速さ**なのかは
     # この2つを分けて記録しないと区別できない(analyze_filters.pyで層別するため)。
     notified_elapsed_seconds: int = 0
+    # 通知した時点の★の数(直近5分のユニーク買い手数から決まる。scoring参照)と、
+    # その後の観察で到達した最大の★の数。
+    #
+    # 初回通知は卒業直後で、DexScreenerの直近5分ウィンドウがまだ始まったばかり
+    # なので★0のまま出ることが多い。後から★が付いたトークンには追い通知が飛ぶが、
+    # **追い通知は結果記録を新しく作らない**(最初の通知時点を基準に評価するため)。
+    # そのため「追い通知が飛んだトークンの成績」が今まで一度も測れていなかった。
+    # 最大★を持ち回ることで、★が後から付くことに意味があるのかを層別できる。
+    notified_star_count: int = 0
+    max_star_count: int = 0
     # 通知後に観測した時価総額の最安値・最高値。チェックポイントの値だけでは
     # 「途中でどこまで下がったか」が分からず、損切りを入れた場合の成績を
     # 推定でしか出せない(analyze_drawdown.py参照)。これを記録しておくと
@@ -88,6 +98,7 @@ class OutcomeTracker:
         now: float,
         creator: str = "",
         elapsed_seconds: int = 0,
+        star_count: int = 0,
     ) -> None:
         """通知が発生した瞬間に1回呼び出し、結果追跡を開始する。
 
@@ -107,10 +118,22 @@ class OutcomeTracker:
             last_market_cap_usd=market_cap_usd,
             creator=creator,
             notified_elapsed_seconds=elapsed_seconds,
+            notified_star_count=star_count,
+            max_star_count=star_count,
             min_market_cap_usd=market_cap_usd,
             max_market_cap_usd=market_cap_usd,
             last_polled_at=now,
         )
+
+    def update_star_count(self, mint: str, star_count: int) -> None:
+        """後のチェックポイントで★が増えたら、その最大値を覚えておく。
+
+        追い通知そのものは結果記録を作らないので、ここで持ち回らないと
+        「★が後から付いたトークンは成績が良いのか」を永久に測れない。
+        """
+        outcome = self._outcomes.get(mint)
+        if outcome is not None and star_count > outcome.max_star_count:
+            outcome.max_star_count = star_count
 
     def update_market_cap(self, mint: str, market_cap_usd: float, now: float = 0.0) -> None:
         """DexScreenerから取得し直した最新の時価総額を反映する。
@@ -210,6 +233,8 @@ class OutcomeTracker:
             "checkpoint_seconds": checkpoint_seconds,
             "market_cap_at_notify_usd": outcome.market_cap_at_notify_usd,
             "notified_elapsed_seconds": outcome.notified_elapsed_seconds,
+            "notified_star_count": outcome.notified_star_count,
+            "max_star_count": outcome.max_star_count,
             "market_cap_now_usd": outcome.last_market_cap_usd if market_cap_available else None,
             "change_pct": None if change_pct is None else round(change_pct, 2),
             # 通知後にどこまで下げ、どこまで上げたか。損切り・利確を入れた

@@ -375,6 +375,9 @@ async def _process_token_checkpoint(
 
     is_tier_upgrade = tier is not None and scoring.is_upgrade(token.notified_tier, tier)
     star_count = scoring.star_count_for_unique_buyers(token.unique_buyers_m5)
+    # 追い通知は結果記録を新しく作らないため、★の推移はここで持ち回る
+    # (outcome_tracker.update_star_count参照)。
+    outcomes.update_star_count(token.mint, star_count)
     action = _decide_notification_action(
         is_tier_upgrade, tier, token.discord_notified, token.stars_followup_sent, star_count
     )
@@ -411,6 +414,7 @@ async def _process_token_checkpoint(
             now=now,
             creator=token.creator,
             elapsed_seconds=elapsed,
+            star_count=star_count,
         )
     elif action == "followup":
         logger.info(
