@@ -103,6 +103,59 @@ def load_pairs(path: str, early: int, late: int, max_mcap: float) -> tuple[list[
     return pairs, counts
 
 
+def load_single(path: str, checkpoint: int, max_mcap: float) -> tuple[list[dict], dict[str, int]]:
+    """1つのチェックポイントだけを読む。**ペアを作らない。**
+
+    確定計算(exact_outcomes)に必要なのは「実測の最安値」と「その時点の結果」
+    だけで、早い時点との突き合わせは要らない。ペアを要求すると遅い方の
+    チェックポイントを待つことになり、待ち時間もサンプル数も倍損する。
+
+    30分の記録だけで測れば、通知から30分で結果が確定し、使える件数も増える。
+    保有時間が短い分、実際の運用としてもむしろ素直(晒す時間が短い)。
+    """
+    rows: list[dict] = []
+    counts = {"unresolved": 0, "dropped": 0, "no_low": 0}
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except FileNotFoundError:
+        return [], counts
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("checkpoint_seconds") != checkpoint:
+            continue
+        change_pct = record.get("change_pct")
+        if change_pct is None:
+            counts["unresolved"] += 1
+            continue
+        notify_mcap = record.get("market_cap_at_notify_usd") or 0
+        now_mcap = record.get("market_cap_now_usd") or 0
+        if notify_mcap <= 0 or notify_mcap > max_mcap or now_mcap > max_mcap:
+            counts["dropped"] += 1
+            continue
+        min_pct = record.get("min_change_pct")
+        if min_pct is None:
+            counts["no_low"] += 1
+            continue
+        rows.append(
+            {
+                "mint": record.get("mint"),
+                "late_pct": change_pct,
+                "notify_mcap": notify_mcap,
+                "notify_score": int(record.get("notified_score") or 0),
+                "min_pct": min_pct,
+                "max_pct": record.get("max_change_pct"),
+            }
+        )
+    return rows, counts
+
+
 def rows_with_measured_low(pairs: list[dict]) -> list[dict]:
     """最安値が実測されている記録だけを抜き出す。
 
@@ -312,6 +365,19 @@ def main() -> None:
 
     measured = rows_with_measured_low(pairs)
     if args.exact:
+        # 確定計算にペアは不要。指定チェックポイント単独で読み直して、
+        # 待ち時間とサンプル数を損しないようにする。
+        measured, single_counts = load_single(args.path, args.late, args.max_mcap)
+        if args.min_mcap or args.min_score:
+            measured = [
+                r
+                for r in measured
+                if r["notify_mcap"] >= args.min_mcap and r["notify_score"] >= args.min_score
+            ]
+        if single_counts["no_low"]:
+            print(
+                f"(最安値が記録されていない古い記録 {single_counts['no_low']}件は確定計算から除外)"
+            )
         if not measured:
             print(
                 "最安値(min_change_pct)が記録された銘柄がまだありません。"
@@ -319,7 +385,7 @@ def main() -> None:
                 "(記録開始前の分には経路が入っていないため、確定計算はできません)。"
             )
             return
-        print(f"=== 最安値まで実測できた銘柄: {len(measured)}件 / 全{len(pairs)}件 ===")
+        print(f"=== {args.late}秒時点 / 最安値まで実測できた銘柄: {len(measured)}件 ===")
         print("推定ではなく確定。損切りが発動したかどうかを事実として判定している")
         for slippage in args.slippage_list:
             _print_exact_sweep(measured, args.stop_list, slippage, args.min_count)

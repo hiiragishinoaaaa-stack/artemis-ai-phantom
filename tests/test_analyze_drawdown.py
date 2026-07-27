@@ -10,6 +10,7 @@ import json
 
 from analyze_drawdown import (
     load_pairs,
+    load_single,
     naive_outcomes,
     exact_outcomes,
     path_checked_outcomes,
@@ -172,3 +173,46 @@ def test_exact_outcomes_uses_the_measured_low_not_the_checkpoints():
 def test_exact_outcomes_keeps_a_winner_whose_low_never_reached_the_stop():
     pairs = [_pair("A", -10.0, 300.0, min_pct=-25.0)]
     assert exact_outcomes(pairs, 30.0, 30.0) == [300.0]
+
+
+def test_load_single_does_not_require_a_pair(tmp_path):
+    """確定計算に早い時点は要らない。ペアを求めると待ち時間もサンプルも倍損する。"""
+    records = [
+        {**_rec("A", 1800, -40.0), "min_change_pct": -55.0, "max_change_pct": 10.0},
+        {**_rec("B", 1800, 120.0), "min_change_pct": -5.0, "max_change_pct": 130.0},
+    ]
+    path = _write(tmp_path, records)
+
+    pairs, _ = load_pairs(path, 1800, 3600, 1_000_000_000.0)
+    assert pairs == []  # 60分の記録がまだ無いのでペアは1件も作れない
+
+    rows, counts = load_single(path, 1800, 1_000_000_000.0)
+    assert [r["mint"] for r in rows] == ["A", "B"]
+    assert counts["no_low"] == 0
+
+
+def test_load_single_skips_records_without_a_measured_low(tmp_path):
+    """安値が無い古い記録を混ぜると、確定計算ではなくなる。"""
+    records = [
+        {**_rec("A", 1800, -40.0), "min_change_pct": -55.0},
+        _rec("B", 1800, -40.0),  # 記録開始前の分
+    ]
+    path = _write(tmp_path, records)
+
+    rows, counts = load_single(path, 1800, 1_000_000_000.0)
+    assert [r["mint"] for r in rows] == ["A"]
+    assert counts["no_low"] == 1
+
+
+def test_load_single_carries_the_fields_the_filters_need(tmp_path):
+    records = [
+        {
+            **_rec("A", 1800, -40.0, notify_mcap=2_000_000.0),
+            "notified_score": 100,
+            "min_change_pct": -55.0,
+        }
+    ]
+    rows, _ = load_single(_write(tmp_path, records), 1800, 1_000_000_000.0)
+    assert rows[0]["notify_mcap"] == 2_000_000.0
+    assert rows[0]["notify_score"] == 100
+    assert exact_outcomes(rows, 30.0, 30.0) == [-30.0]
