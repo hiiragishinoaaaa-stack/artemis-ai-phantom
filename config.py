@@ -157,6 +157,23 @@ STAR_THRESHOLDS: tuple[int, ...] = (2, 5, 10, 20, 40)
 # もとづく判断ではない。測りたくなったらFalseに戻すこと。
 SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS = _env_bool("SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS", True)
 
+# --- 有名コインへの便乗名(famous_name.py) ---
+# 「Doge Head Coin」のように、有名コインの名前をもじっただけのトークン。
+# token_name_history.pyの重複検出は「過去に観測したのと同じ名前」しか捕まえ
+# られず、こういう初出の便乗名は素通りする。
+#
+# **これらの成績は一度も測っていない。** 便乗系が不利という測定結果があるわけ
+# ではないので、通常通知は今まで通り送り、**候補(🎯)からだけ外す**。通常通知
+# まで止めると結果の記録が作られず、この判断の是非を永久に検証できなくなる。
+FAMOUS_COIN_NAMES: tuple[str, ...] = (
+    "doge", "shiba", "shib", "pepe", "bonk", "trump", "elon", "musk", "tesla",
+    "bitcoin", "ethereum", "solana", "tether", "ripple", "cardano", "binance",
+    "popcat", "wojak", "brett", "moodeng", "fartcoin", "pudgy", "penguin",
+    "official", "nvidia", "apple", "google", "amazon", "netflix",
+)
+# Falseにすると便乗名でも候補(🎯)に含める(成績を測りたくなった場合)。
+CANDIDATE_EXCLUDE_FAMOUS_NAMES = _env_bool("CANDIDATE_EXCLUDE_FAMOUS_NAMES", True)
+
 # --- 実測にもとづく「候補」の目印(discord_notifier.py) ---
 # 通知そのものは今まで通り全部出す(データ収集を止めないため)。そのうえで、
 # 実測で成績が良かった条件に当たるものだけに目印を付ける。

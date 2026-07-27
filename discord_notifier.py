@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 
 import config
+import famous_name
 from scoring import ScoreResult, star_count_for_unique_buyers
 from token_watcher import TrackedToken
 
@@ -147,7 +148,14 @@ def is_trade_candidate(token: TrackedToken, score_total: int) -> bool:
     層のデータが二度と集まらなくなる)。目で見て確かめるための目印。
 
     条件と根拠は config.TRADE_CANDIDATE_* を参照。**買い推奨ではない。**
+
+    有名コインの名前をもじっただけのトークン(「Doge Head Coin」等)は、
+    時価総額とスコアの条件を満たしていても候補から外す。判定の根拠は実測では
+    なく方針(famous_name.py参照)。通常通知は送るので結果の記録は残り、
+    後から便乗系の成績を測り直せる。
     """
+    if config.CANDIDATE_EXCLUDE_FAMOUS_NAMES and famous_name.is_derivative(token.name, token.symbol):
+        return False
     return (
         token.market_cap_usd >= config.TRADE_CANDIDATE_MIN_MARKET_CAP_USD
         and score_total >= config.TRADE_CANDIDATE_MIN_SCORE

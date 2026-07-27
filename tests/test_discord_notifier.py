@@ -503,3 +503,41 @@ def test_candidate_webhook_receives_a_copy_when_configured(monkeypatch):
         _candidate_token(50_000.0), _score(100), "HIGH", elapsed_seconds=60
     )
     assert sent == ["https://example.invalid/normal"]  # 候補でなければ送らない
+
+
+def test_famous_name_derivatives_are_kept_out_of_the_candidate_set(monkeypatch):
+    """実際に候補チャンネルへ流れてしまった「Doge Head Coin」の再発防止。
+
+    時価総額もスコアも条件を満たしているが、有名コインの名前をもじっただけ
+    なので候補にはしない。
+    """
+    monkeypatch.setattr(config, "CANDIDATE_EXCLUDE_FAMOUS_NAMES", True)
+    token = _candidate_token(2_000_000.0)
+    token.name, token.symbol = "Doge Head Coin", "DHC"
+    assert discord_notifier.is_trade_candidate(token, 100) is False
+
+
+def test_famous_name_exclusion_can_be_turned_off(monkeypatch):
+    """便乗系の成績は未測定。測りたくなったら戻せること。"""
+    monkeypatch.setattr(config, "CANDIDATE_EXCLUDE_FAMOUS_NAMES", False)
+    token = _candidate_token(2_000_000.0)
+    token.name, token.symbol = "Doge Head Coin", "DHC"
+    assert discord_notifier.is_trade_candidate(token, 100) is True
+
+
+def test_famous_name_derivatives_still_get_a_normal_notification(monkeypatch):
+    """通常通知まで止めると結果の記録が残らず、判断の是非を検証できなくなる。"""
+    sent: list[str] = []
+    monkeypatch.setattr(config, "CANDIDATE_EXCLUDE_FAMOUS_NAMES", True)
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://example.invalid/normal")
+    monkeypatch.setattr(config, "DISCORD_PERFECT_SCORE_WEBHOOK_URL", "")
+    monkeypatch.setattr(config, "DISCORD_CANDIDATE_WEBHOOK_URL", "https://example.invalid/cand")
+    monkeypatch.setattr(
+        discord_notifier, "_send", lambda content, url, components=None: sent.append(url)
+    )
+
+    token = _candidate_token(2_000_000.0)
+    token.name, token.symbol = "Doge Head Coin", "DHC"
+    discord_notifier.notify_score_update(token, _score(100), "HIGH", elapsed_seconds=60)
+
+    assert sent == ["https://example.invalid/normal"]  # 候補チャンネルへは行かない
