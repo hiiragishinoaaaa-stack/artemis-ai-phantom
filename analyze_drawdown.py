@@ -95,6 +95,7 @@ def load_pairs(path: str, early: int, late: int, max_mcap: float) -> tuple[list[
                 "early_pct": records[early]["change_pct"],
                 "late_pct": records[late]["change_pct"],
                 "notify_mcap": records[late]["market_cap_at_notify_usd"],
+                "notify_score": int(records[late].get("notified_score") or 0),
                 "min_pct": min_pct,
                 "max_pct": records[late].get("max_change_pct"),
             }
@@ -255,6 +256,20 @@ def main() -> None:
     )
     parser.add_argument("--max-mcap", type=float, default=_DEFAULT_MAX_MCAP)
     parser.add_argument(
+        "--min-mcap",
+        type=float,
+        default=0.0,
+        help="通知時の時価総額がこの額未満の銘柄を除外する。analyze_filters.py で"
+        "『$100,000以上』『$1,000,000以上』が勝率を約1.8倍にすると分かっているので、"
+        "その層だけで損切りの成績を見るために使う",
+    )
+    parser.add_argument(
+        "--min-score",
+        type=int,
+        default=0,
+        help="通知スコアがこの点数未満の銘柄を除外する(例: 100)",
+    )
+    parser.add_argument(
         "--sweep",
         action="store_true",
         help="損切り幅と滑りを総当たりして一覧にする。1回で全パターンを確認できる",
@@ -278,6 +293,17 @@ def main() -> None:
 
     fill_pct = args.stop_pct + args.slippage_pct
     pairs, counts = load_pairs(args.path, args.early, args.late, args.max_mcap)
+    if args.min_mcap or args.min_score:
+        before = len(pairs)
+        pairs = [
+            p
+            for p in pairs
+            if p["notify_mcap"] >= args.min_mcap and p["notify_score"] >= args.min_score
+        ]
+        print(
+            f"絞り込み: 時価総額 ${args.min_mcap:,.0f}以上 / スコア {args.min_score}点以上"
+            f" → {before}件中 {len(pairs)}件"
+        )
     if not pairs:
         print(
             f"{args.path} に {args.early}秒 と {args.late}秒 が両方そろった銘柄がありませんでした。"

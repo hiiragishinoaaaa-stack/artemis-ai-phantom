@@ -57,6 +57,7 @@ def test_load_pairs_joins_both_checkpoints_of_the_same_mint(tmp_path):
             "early_pct": -10.0,
             "late_pct": 40.0,
             "notify_mcap": 50_000.0,
+            "notify_score": 0,
             "min_pct": None,
             "max_pct": None,
         }
