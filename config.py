@@ -388,7 +388,12 @@ OUTCOME_CHECKPOINTS_SECONDS: tuple[int, ...] = (1800, 3600, 86400)  # 30分/1時
 # ごとに時価総額を観測し、その間の最安値・最高値をoutcomes.jsonlへ残す。
 # DexScreenerは複数mintをまとめて問い合わせられるため(30件まで)、この頻度でも
 # 実際のリクエスト数はごく少ない(dexscreener_client.fetch_best_pairs参照)。
-OUTCOME_EXTREMES_INTERVAL_SECONDS = _env_int("OUTCOME_EXTREMES_INTERVAL_SECONDS", 120)
+#
+# 間隔を60秒にしてあるのは、結論が「-20%で切った場合」の列で決まっているため。
+# 損切りが浅いほど、観測の隙間に起きた急落を取りこぼす影響が大きくなる
+# (一番良く見える列が、一番信用できない列になる)。間隔を半分にすれば
+# 見落とす窓も半分になる。バッチ取得なのでリクエスト数はほぼ増えない。
+OUTCOME_EXTREMES_INTERVAL_SECONDS = _env_int("OUTCOME_EXTREMES_INTERVAL_SECONDS", 60)
 OUTCOME_EXTREMES_WINDOW_SECONDS = _env_int("OUTCOME_EXTREMES_WINDOW_SECONDS", 3600)
 _outcomes_file_path_env = os.getenv("OUTCOMES_FILE_PATH")
 OUTCOMES_FILE_PATH = Path(_outcomes_file_path_env) if _outcomes_file_path_env else BASE_DIR / "logs" / "outcomes.jsonl"
