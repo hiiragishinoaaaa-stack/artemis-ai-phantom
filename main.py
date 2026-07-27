@@ -410,6 +410,7 @@ async def _process_token_checkpoint(
             market_cap_usd=token.market_cap_usd,
             now=now,
             creator=token.creator,
+            elapsed_seconds=elapsed,
         )
     elif action == "followup":
         logger.info(

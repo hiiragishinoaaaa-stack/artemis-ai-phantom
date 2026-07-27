@@ -42,6 +42,14 @@ class TrackedOutcome:
     # 大暴落を検出した際にcreator_blocklistへ登録するために使う
     # (main.py参照)。
     creator: str = ""
+    # 通知した時点で、DEX卒業から何秒経っていたか。
+    #
+    # 「通知時の時価総額が大きいほど成績が良い」と分かっているが、通知は卒業から
+    # 15分以内(config.MIGRATION_CHECKPOINTS_SECONDS)に必ず起きる。つまり時価総額
+    # $1,000,000での通知は「大きいトークン」ではなく「**15分以内に卒業時の10倍以上へ
+    # 急騰したトークン**」を意味する。効いているのが**規模**なのか**上がる速さ**なのかは
+    # この2つを分けて記録しないと区別できない(analyze_filters.pyで層別するため)。
+    notified_elapsed_seconds: int = 0
     # 通知後に観測した時価総額の最安値・最高値。チェックポイントの値だけでは
     # 「途中でどこまで下がったか」が分からず、損切りを入れた場合の成績を
     # 推定でしか出せない(analyze_drawdown.py参照)。これを記録しておくと
@@ -79,6 +87,7 @@ class OutcomeTracker:
         market_cap_usd: float,
         now: float,
         creator: str = "",
+        elapsed_seconds: int = 0,
     ) -> None:
         """通知が発生した瞬間に1回呼び出し、結果追跡を開始する。
 
@@ -97,6 +106,7 @@ class OutcomeTracker:
             market_cap_at_notify_usd=market_cap_usd,
             last_market_cap_usd=market_cap_usd,
             creator=creator,
+            notified_elapsed_seconds=elapsed_seconds,
             min_market_cap_usd=market_cap_usd,
             max_market_cap_usd=market_cap_usd,
             last_polled_at=now,
@@ -199,6 +209,7 @@ class OutcomeTracker:
             "notified_score": outcome.notified_score,
             "checkpoint_seconds": checkpoint_seconds,
             "market_cap_at_notify_usd": outcome.market_cap_at_notify_usd,
+            "notified_elapsed_seconds": outcome.notified_elapsed_seconds,
             "market_cap_now_usd": outcome.last_market_cap_usd if market_cap_available else None,
             "change_pct": None if change_pct is None else round(change_pct, 2),
             # 通知後にどこまで下げ、どこまで上げたか。損切り・利確を入れた

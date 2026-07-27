@@ -238,3 +238,33 @@ def test_due_for_extremes_poll_excludes_in_flight_outcomes():
     tracker.mark_in_flight(outcome)
 
     assert tracker.due_for_extremes_poll(now=1500.0, interval=120.0, window=3600.0) == []
+
+
+def test_record_includes_the_elapsed_seconds_at_notification():
+    """『規模』と『上がる速さ』を後から分けて測れるようにするための記録。
+
+    通知は卒業から15分以内に必ず起きるので、時価総額$1,000,000での通知は
+    「大きいトークン」ではなく「短時間で急騰したトークン」を意味する。
+    どちらが効いているかは、経過秒数を残さないと区別できない。
+    """
+    tracker = OutcomeTracker()
+    tracker.register(
+        mint="MINT1", name="T", symbol="T", tier="HIGH", score=100,
+        market_cap_usd=1_500_000.0, now=1000.0, elapsed_seconds=60,
+    )
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    tracker.record_and_advance(outcome)
+
+    record = json.loads(config.OUTCOMES_FILE_PATH.read_text(encoding="utf-8").strip())
+    assert record["notified_elapsed_seconds"] == 60
+    assert record["market_cap_at_notify_usd"] == 1_500_000.0
+
+
+def test_elapsed_seconds_defaults_to_zero_for_older_call_sites():
+    tracker = OutcomeTracker()
+    _register(tracker, now=1000.0)
+    outcome = tracker.due_for_checkpoint(now=1000.0 + 1800)[0]
+    tracker.record_and_advance(outcome)
+
+    record = json.loads(config.OUTCOMES_FILE_PATH.read_text(encoding="utf-8").strip())
+    assert record["notified_elapsed_seconds"] == 0
