@@ -5,6 +5,7 @@ import pytest
 
 import config
 import scoring
+from token_watcher import TrackedToken
 from token_watcher import TokenWatcher
 
 
@@ -266,3 +267,32 @@ def test_is_upgrade_rank_comparison():
     assert scoring.is_upgrade("WATCH", "WATCH") is False
     assert scoring.is_upgrade("WATCH", "LOW") is False
     assert scoring.is_upgrade("WATCH", None) is False
+
+
+def test_star_count_extends_to_five_levels():
+    """★3(10人)に届く通知が増えたので、上に2段階足してある。"""
+    counts = [scoring.star_count_for_unique_buyers(n) for n in (0, 1, 2, 5, 10, 20, 40, 500)]
+    assert counts == [0, 0, 1, 2, 3, 4, 5, 5]
+
+
+def test_star_scale_does_not_move_the_score():
+    """★を増やしてもスコアは1点も動かないこと。
+
+    動いてしまうと「スコア100点の勝率32.5%」等、過去2,443件で測った結果が
+    別物になり、比較が成立しなくなる。
+    """
+    token = TrackedToken(mint="M", name="n", symbol="s", migrated_at=0.0)
+    token.has_pair_data = True
+    token.unique_buyers_m5 = 50  # ★5に相当する人数
+    high = scoring._score_unique_buyers_m5(token)
+
+    token.unique_buyers_m5 = 10  # ★3に相当
+    still_max = scoring._score_unique_buyers_m5(token)
+
+    assert high.points == still_max.points == 20  # 10人以上は一律+20のまま
+
+
+def test_followup_trigger_threshold_is_unchanged_by_the_new_scale():
+    """追い通知は★1つ以上で発火する。一番下の区切りは動かしていない。"""
+    assert scoring.star_count_for_unique_buyers(1) == 0
+    assert scoring.star_count_for_unique_buyers(2) == 1

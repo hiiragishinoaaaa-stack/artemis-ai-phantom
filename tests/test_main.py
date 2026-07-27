@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+import config
+
 from main import _RecentTokenNames, _build_notification_row, _build_outcome_row, _decide_notification_action
 from outcome_tracker import TrackedOutcome
 from scoring import ScoreResult
@@ -169,3 +171,45 @@ def test_build_outcome_row_writes_null_when_market_cap_unavailable():
 
     assert row["market_cap_now_usd"] is None
     assert row["change_pct"] is None
+
+
+def test_duplicate_name_tokens_are_not_notified(monkeypatch):
+    """なりすましは通知しない(追い通知も含めて一切)。"""
+    monkeypatch.setattr(config, "SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS", True)
+    assert (
+        _decide_notification_action(
+            is_tier_upgrade=True, tier="HIGH", discord_notified=False,
+            stars_followup_sent=False, star_count=3, duplicate_name=True,
+        )
+        is None
+    )
+    assert (
+        _decide_notification_action(
+            is_tier_upgrade=False, tier="HIGH", discord_notified=True,
+            stars_followup_sent=False, star_count=3, duplicate_name=True,
+        )
+        is None
+    )
+
+
+def test_duplicate_name_tokens_still_notify_when_suppression_is_off(monkeypatch):
+    """成績を測りたくなったら戻せること(なりすましの成績は未測定のため)。"""
+    monkeypatch.setattr(config, "SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS", False)
+    assert (
+        _decide_notification_action(
+            is_tier_upgrade=True, tier="HIGH", discord_notified=False,
+            stars_followup_sent=False, star_count=0, duplicate_name=True,
+        )
+        == "primary"
+    )
+
+
+def test_non_duplicate_tokens_are_unaffected(monkeypatch):
+    monkeypatch.setattr(config, "SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS", True)
+    assert (
+        _decide_notification_action(
+            is_tier_upgrade=True, tier="HIGH", discord_notified=False,
+            stars_followup_sent=False, star_count=0, duplicate_name=False,
+        )
+        == "primary"
+    )

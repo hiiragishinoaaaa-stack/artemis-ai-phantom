@@ -193,6 +193,7 @@ def _decide_notification_action(
     discord_notified: bool,
     stars_followup_sent: bool,
     star_count: int,
+    duplicate_name: bool = False,
 ) -> str | None:
     """このチェックポイントで取るべきDiscord通知アクションを返す。
 
@@ -210,7 +211,15 @@ def _decide_notification_action(
       条件にしているため、LOW止まりで一度もDiscordへ送っていない
       トークンには発火しない。
     - None: 何もしない。
+
+    既に見た名前/ティッカーを名乗るトークン(なりすまし)は、
+    config.SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS が有効なら通知しない。
+    追い通知も含めて一切送らないので、結果の記録も作られない
+    (=集計対象からも外れる)。なりすましの成績は未測定であり、これは
+    実測にもとづく判断ではなく「偽物は見たくない」という方針の設定。
     """
+    if duplicate_name and config.SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS:
+        return None
     if is_tier_upgrade:
         return "primary" if tier in ("HIGH", "WATCH") else None
     if discord_notified and not stars_followup_sent and star_count >= 1:
@@ -379,8 +388,20 @@ async def _process_token_checkpoint(
     # (outcome_tracker.update_star_count参照)。
     outcomes.update_star_count(token.mint, star_count)
     action = _decide_notification_action(
-        is_tier_upgrade, tier, token.discord_notified, token.stars_followup_sent, star_count
+        is_tier_upgrade,
+        tier,
+        token.discord_notified,
+        token.stars_followup_sent,
+        star_count,
+        duplicate_name=bool(token.duplicate_name_reason),
     )
+    if action is None and token.duplicate_name_reason and config.SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS:
+        logger.info(
+            "main: なりすましのため通知を抑止しました mint=%s symbol=%s reason=%s",
+            token.mint,
+            token.symbol,
+            token.duplicate_name_reason,
+        )
 
     if is_tier_upgrade:
         token.notified_tier = tier

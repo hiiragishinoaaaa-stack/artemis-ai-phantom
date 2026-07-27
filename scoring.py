@@ -56,9 +56,17 @@ def _score_buy_sell_ratio(token: TrackedToken) -> ScoreComponent:
     return ScoreComponent("直近5分のBuy/Sell比率", 0, f"買い{buy}/売り{sell}(売り優勢または同数: 加点なし)")
 
 
-# discord_notifier.pyの★表示もこの区切りに合わせているため、変更する場合は
-# 両方一致させること。
+# スコアの加点区切り(+5 / +10 / +20)。
+#
+# **ここは変更しないこと。** 変えるとスコアの意味自体が変わり、過去に集めた
+# 2,443件との比較が成立しなくなる(「スコア100点の勝率32.5%」が別物になる)。
+# ★の見た目を増やしたいだけなら STAR_THRESHOLDS の方を変える。
 UNIQUE_BUYERS_M5_TIER_THRESHOLDS: tuple[int, int, int] = (2, 5, 10)
+
+# ★表示の区切り。加点とは切り離してあるので、ここは自由に増減できる。
+# ★3(10人)に届く通知が多くなったため、上に2段階足して解像度を上げている
+# (analyze_filters.pyで「★4以上」「★5」を層別できるようにするため)。
+STAR_THRESHOLDS: tuple[int, ...] = config.STAR_THRESHOLDS
 
 
 def _score_unique_buyers_m5(token: TrackedToken) -> ScoreComponent:
@@ -74,19 +82,20 @@ def _score_unique_buyers_m5(token: TrackedToken) -> ScoreComponent:
 
 
 def star_count_for_unique_buyers(unique_buyers_m5: int) -> int:
-    """直近5分のユニーク買い手数を0〜3の★段階に変換する(UNIQUE_BUYERS_M5_TIER_THRESHOLDS基準)。
+    """直近5分のユニーク買い手数を★の数に変換する(STAR_THRESHOLDS基準)。
 
     discord_notifier.py(通知本文の★表示)とmain.py(追い通知の判定)の
     両方から使う共通ロジック。
+
+    **スコアの加点区切りとは別物。** ★を増やしてもスコアは1点も動かないので、
+    過去データとの比較はそのまま成立する。追い通知の発火条件(★1つ以上)も
+    一番下の区切りが変わらない限り影響を受けない。
     """
-    tier2, tier5, tier10 = UNIQUE_BUYERS_M5_TIER_THRESHOLDS
-    if unique_buyers_m5 >= tier10:
-        return 3
-    if unique_buyers_m5 >= tier5:
-        return 2
-    if unique_buyers_m5 >= tier2:
-        return 1
-    return 0
+    count = 0
+    for threshold in STAR_THRESHOLDS:
+        if unique_buyers_m5 >= threshold:
+            count += 1
+    return count
 
 
 def _score_volume_m5(token: TrackedToken) -> ScoreComponent:

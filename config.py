@@ -141,6 +141,22 @@ HIGH_SCORE_THRESHOLD = _env_int("HIGH_SCORE_THRESHOLD", 75)
 WATCH_SCORE_THRESHOLD = _env_int("WATCH_SCORE_THRESHOLD", 70)
 LOW_SCORE_THRESHOLD = _env_int("LOW_SCORE_THRESHOLD", 35)
 
+# ★表示の区切り(直近5分のユニーク買い手数)。scoring.star_count_for_unique_buyers。
+# ★3(10人)に届く通知が多くなったため上に2段階足してある。
+# **スコアの加点区切り(scoring.UNIQUE_BUYERS_M5_TIER_THRESHOLDS)とは別物で、
+# ここを変えてもスコアは1点も動かない。** 過去データとの比較を壊さないための分離。
+STAR_THRESHOLDS: tuple[int, ...] = (2, 5, 10, 20, 40)
+
+# --- なりすまし(名前/ティッカー重複)の扱い ---
+# 既に見た名前/ティッカーを別mintが後から名乗った場合、これまでは
+# 「⚠️なりすまし注意」を付けたうえで通知していた。Trueにすると通知自体を
+# 送らない(結果の記録も作らない=集計対象からも外れる)。
+#
+# 注意: なりすましトークンの成績は**一度も測っていない**。実際に不利かどうかは
+# 未検証で、これは「偽物は見たくない」という方針の設定であって、実測に
+# もとづく判断ではない。測りたくなったらFalseに戻すこと。
+SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS = _env_bool("SUPPRESS_DUPLICATE_NAME_NOTIFICATIONS", True)
+
 # --- 実測にもとづく「候補」の目印(discord_notifier.py) ---
 # 通知そのものは今まで通り全部出す(データ収集を止めないため)。そのうえで、
 # 実測で成績が良かった条件に当たるものだけに目印を付ける。

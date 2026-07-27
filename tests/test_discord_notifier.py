@@ -339,7 +339,11 @@ def test_notify_star_upgrade_fires_with_just_one_star(monkeypatch):
 
 @pytest.mark.parametrize(
     "unique_buyers_m5,expected_stars",
-    [(0, ""), (1, ""), (2, "⭐"), (4, "⭐"), (5, "⭐⭐"), (9, "⭐⭐"), (10, "⭐⭐⭐"), (30, "⭐⭐⭐")],
+    [
+        (0, ""), (1, ""), (2, "⭐"), (4, "⭐"), (5, "⭐⭐"), (9, "⭐⭐"), (10, "⭐⭐⭐"),
+        # ★3(10人)に届く通知が増えたため、上に2段階足してある(config.STAR_THRESHOLDS)。
+        (19, "⭐⭐⭐"), (20, "⭐⭐⭐⭐"), (39, "⭐⭐⭐⭐"), (40, "⭐⭐⭐⭐⭐"), (500, "⭐⭐⭐⭐⭐"),
+    ],
 )
 def test_notify_shows_unique_buyer_stars(monkeypatch, unique_buyers_m5, expected_stars):
     monkeypatch.setattr(config, "DISCORD_ENABLED", True)
