@@ -114,6 +114,22 @@ def required_win_rate(rows: list[dict]) -> float:
     return l / (w + l) * 100
 
 
+def breakeven_loss(rows: list[dict]) -> float:
+    """収支が±0になる「負けの大きさ」(%)。損切りをどこに置けばよいかの目標値。
+
+    勝率 p、勝ち中央値 W のとき、±0の条件は p×W = (1-p)×L なので
+
+        L = p × W ÷ (1 - p)
+
+    **負けをこの幅より浅く止められれば、その条件は成立する。** 実測の負け中央値が
+    これより深いなら、通知条件をどう変えても足りず、出口を作るしかない。
+    """
+    p = win_rate(rows) / 100
+    if p <= 0 or p >= 1:
+        return 0.0
+    return p * win_median(rows) / (1 - p)
+
+
 def evaluate(
     rows: list[dict], first_half: list[dict], second_half: list[dict],
     predicate: Callable[[dict], bool], baseline_win: float,
@@ -147,6 +163,7 @@ def evaluate(
         "win_median": win_median(kept),
         "loss_median": loss_median(kept),
         "required": required_win_rate(kept),
+        "breakeven_loss": breakeven_loss(kept),
         "enough": enough,
         "replicated": replicated,
     }
@@ -205,18 +222,27 @@ def main() -> None:
             f"{label:<26}{result['count']:>7}{result['win_rate']:>7.1f}%"
             f"{lift:>+8.1f}p{result['first']:>7.1f}%{result['second']:>7.1f}%{verdict:>8}"
         )
-        if verdict in ("○", "◎") and (best is None or result["win_rate"] > best[0]):
-            best = (result["win_rate"], label, result)
+        # 勝率ではなく**収支までの距離**で選ぶ。絞り込むほど勝率は上がるが、
+        # 大きく走る銘柄も一緒に捨てるため、勝率が最高の条件が収支では最悪に
+        # なることが実際に起きた(スコア100かつ$100k以上: 勝率41.4%で最高、
+        # 必要勝率59.6%で最下位)。
+        margin = result["win_rate"] - result["required"]
+        if verdict in ("○", "◎") and (best is None or margin > best[0]):
+            best = (margin, label, result)
 
     print("\n=== 勝率だけでは足りない: 収支が成立するか ===")
-    print(f"{'条件':<26}{'勝率':>8}{'勝ち中央値':>12}{'負け中央値':>12}{'必要勝率':>10}{'収支':>8}")
+    print(
+        f"{'条件':<26}{'勝率':>8}{'勝ち中央値':>12}{'負け中央値':>12}"
+        f"{'必要勝率':>10}{'収支':>7}{'必要な損切り':>14}"
+    )
     for label, result, verdict in evaluated:
         if verdict not in ("○", "◎"):
             continue
         ok = "○" if result["win_rate"] > result["required"] else "×"
         print(
             f"{label:<26}{result['win_rate']:>7.1f}%{result['win_median']:>11.1f}%"
-            f"{result['loss_median']:>11.1f}%{result['required']:>9.1f}%{ok:>8}"
+            f"{result['loss_median']:>11.1f}%{result['required']:>9.1f}%{ok:>7}"
+            f"{-result['breakeven_loss']:>13.1f}%"
         )
 
     print(
@@ -235,6 +261,8 @@ def main() -> None:
         "\n  平均ではなく中央値で計算しているので、**大穴を勘定に入れない厳しめの基準**。"
         "\n※『収支』が × の条件は、勝率が上がっていても勝ち幅が足りていない。"
         "\n  その場合は通知条件ではなく、**出口(損切り・利確)を作らないと成立しない**。"
+        "\n※『必要な損切り』は、負けをこの幅より浅く止められれば収支が成立する、という目標値。"
+        "\n  実測の負け中央値がこれより深いなら、その差がそのまま出口で埋めるべき分。"
     )
     if counts["zero_now"]:
         print(f"※現在時価総額がちょうど0の記録が{counts['zero_now']}件含まれている。")
@@ -245,13 +273,25 @@ def main() -> None:
             "\n  今のスコアと時価総額では、通知を絞っても勝率は上がらない。別の材料が要る。"
         )
     else:
-        _, label, result = best
+        margin, label, result = best
         print(
-            f"\n→ 一番強い候補: 『{label}』"
-            f"\n  勝率 {result['win_rate']:.1f}%(基準 {baseline_win:.1f}%)、"
-            f"{result['count']}件まで絞られる。"
+            f"\n→ 収支に一番近い候補: 『{label}』"
+            f"\n  勝率 {result['win_rate']:.1f}%(基準 {baseline_win:.1f}%)、{result['count']}件。"
             f"\n  前半 {result['first']:.1f}% / 後半 {result['second']:.1f}% で再現している。"
-            "\n  これを通知条件にすると、通知数は減るが1件あたりの質は上がる。"
+        )
+        if margin > 0:
+            print("  必要勝率を上回っており、出口を作らなくても成立する。")
+        else:
+            print(
+                f"  ただし必要勝率に{-margin:.1f}ポイント足りない。"
+                f"\n  **負けを -{result['breakeven_loss']:.0f}% より浅く止められれば成立する。**"
+                f"(実測の負け中央値は {result['loss_median']:.1f}%)"
+                "\n  つまり勝負は通知条件ではなく出口。analyze_drawdown.py --exact で"
+                "\n  実際にその幅で切れたかを確認すること。"
+            )
+        print(
+            "\n※候補は勝率ではなく**収支までの距離**で選んでいる。絞り込むほど勝率は上がるが、"
+            "\n  大きく走る銘柄も一緒に捨てるため、勝率が最高の条件が収支では最下位になりうる。"
         )
 
 

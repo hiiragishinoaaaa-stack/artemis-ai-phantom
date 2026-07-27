@@ -6,7 +6,10 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from analyze_filters import (
+    breakeven_loss,
     evaluate,
     loss_median,
     median_change,
@@ -166,3 +169,23 @@ def test_win_and_loss_medians_split_the_two_sides():
     rows = [_rec(10.0), _rec(90.0), _rec(-50.0), _rec(-90.0)]
     assert win_median(rows) == 50.0
     assert loss_median(rows) == -70.0
+
+
+def test_breakeven_loss_is_the_stop_width_that_makes_a_filter_pay():
+    """勝率40% / 勝ち中央値+90% なら、負けを-60%で止めれば±0。"""
+    rows = _rows(4, 6)  # 勝ち+50%, 負け-80% の既定
+    # 既定の値ではなく、意図した数字で作り直す
+    rows = [_rec(90.0) for _ in range(4)] + [_rec(-99.0) for _ in range(6)]
+    assert breakeven_loss(rows) == pytest.approx(60.0)
+
+
+def test_breakeven_loss_matches_the_required_win_rate_view():
+    """同じ事実の裏返しなので、2つの指標は必ず整合する。"""
+    rows = [_rec(100.0) for _ in range(4)] + [_rec(-50.0) for _ in range(6)]
+    # 実測の負けが必要な損切り幅より浅いなら、必要勝率も下回っているはず
+    assert abs(loss_median(rows)) < breakeven_loss(rows)
+    assert win_rate(rows) > required_win_rate(rows)
+
+
+def test_breakeven_loss_is_zero_when_nothing_ever_wins():
+    assert breakeven_loss([_rec(-90.0), _rec(-80.0)]) == 0.0
