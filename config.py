@@ -193,6 +193,25 @@ TRADE_CANDIDATE_MIN_SCORE = _env_int("TRADE_CANDIDATE_MIN_SCORE", 100)
 DISCORD_CANDIDATE_WEBHOOK_URL = os.getenv("DISCORD_CANDIDATE_WEBHOOK_URL", "")
 DISCORD_CANDIDATE_EMOJI = os.getenv("DISCORD_CANDIDATE_EMOJI", "🎯")
 
+# --- 出口アラート(通知後の下落を知らせる) ---
+# 今日までに測って分かった一番大事なこと: **通知条件だけでは収支が成立せず、
+# 出口が全部を決める**(RESEARCH_FINDINGS.md 確定事項2〜3)。
+# 通知時の時価総額$1M以上でも、持ちっぱなしなら負け中央値は-100%に近い。
+# 一方、負けを-20%で打ち切れた場合は滑り30%を見込んでもプラスだった
+# (+3.9%、n=61。確定値ではないが方向は一貫している)。
+#
+# それなのにbotは**入口しか知らせていなかった**。買った後に何%下げたかは
+# 誰も教えてくれず、実際に-56%まで放置される事故が起きた。
+#
+# 候補(🎯)として通知したトークンが通知時点からこの割合だけ下げたら、
+# 1トークンにつき1回だけ知らせる。**自動売買は一切しない。**
+EXIT_ALERT_DROP_PCT = _env_float("EXIT_ALERT_DROP_PCT", 20.0)
+# 出口アラートを送る先。未設定なら候補チャンネル、それも無ければ通常チャンネル。
+DISCORD_EXIT_ALERT_WEBHOOK_URL = os.getenv("DISCORD_EXIT_ALERT_WEBHOOK_URL", "")
+# 候補(🎯)以外の通知にも出口アラートを出すか。既定はFalse(候補だけ)。
+# Trueにすると通知の6割以上で発火するため、実用にならない。
+EXIT_ALERT_FOR_ALL_NOTIFICATIONS = _env_bool("EXIT_ALERT_FOR_ALL_NOTIFICATIONS", False)
+
 # --- 発行者ブラックリスト(creator_blocklist.py) ---
 # RugCheckで危険判定が出た、または通知後に大暴落したトークンの発行者
 # ウォレットアドレスを記録し、次回以降は名前を変えて再発行されても即座に

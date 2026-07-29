@@ -268,3 +268,64 @@ def test_elapsed_seconds_defaults_to_zero_for_older_call_sites():
 
     record = json.loads(config.OUTCOMES_FILE_PATH.read_text(encoding="utf-8").strip())
     assert record["notified_elapsed_seconds"] == 0
+
+
+def _register_candidate(tracker, mint="MINT1", market_cap_usd=2_000_000.0, is_candidate=True):
+    tracker.register(
+        mint=mint, name="T", symbol="T", tier="HIGH", score=100,
+        market_cap_usd=market_cap_usd, now=1000.0, is_candidate=is_candidate,
+    )
+
+
+def test_exit_alert_fires_once_the_drop_threshold_is_crossed():
+    """買った後に何%下げたかを知らせる唯一の経路。"""
+    tracker = OutcomeTracker()
+    _register_candidate(tracker)
+
+    tracker.update_market_cap("MINT1", 1_900_000.0)  # -5%
+    assert tracker.due_for_exit_alert(20.0, all_notifications=False) == []
+
+    tracker.update_market_cap("MINT1", 1_500_000.0)  # -25%
+    due = tracker.due_for_exit_alert(20.0, all_notifications=False)
+    assert [o.mint for o in due] == ["MINT1"]
+
+
+def test_exit_alert_is_sent_only_once_per_token():
+    tracker = OutcomeTracker()
+    _register_candidate(tracker)
+    tracker.update_market_cap("MINT1", 1_000_000.0)  # -50%
+
+    outcome = tracker.due_for_exit_alert(20.0, all_notifications=False)[0]
+    tracker.mark_exit_alert_sent(outcome)
+
+    tracker.update_market_cap("MINT1", 100_000.0)  # さらに下げても再送しない
+    assert tracker.due_for_exit_alert(20.0, all_notifications=False) == []
+
+
+def test_exit_alert_skips_non_candidates_by_default():
+    """全通知に出すと6割以上で発火して実用にならない。"""
+    tracker = OutcomeTracker()
+    _register_candidate(tracker, is_candidate=False)
+    tracker.update_market_cap("MINT1", 1_000_000.0)  # -50%
+
+    assert tracker.due_for_exit_alert(20.0, all_notifications=False) == []
+    assert len(tracker.due_for_exit_alert(20.0, all_notifications=True)) == 1
+
+
+def test_exit_alert_is_not_triggered_by_a_failed_fetch():
+    """取得失敗で0が入っても暴落と誤認しないこと。"""
+    tracker = OutcomeTracker()
+    _register_candidate(tracker)
+    tracker.update_market_cap("MINT1", 0.0)  # 無視される
+
+    assert tracker.due_for_exit_alert(20.0, all_notifications=False) == []
+
+
+def test_change_pct_now_needs_both_sides():
+    tracker = OutcomeTracker()
+    tracker.register(
+        mint="MINT1", name="T", symbol="T", tier="HIGH", score=100,
+        market_cap_usd=0.0, now=1000.0, is_candidate=True,
+    )
+    outcome = tracker._outcomes["MINT1"]
+    assert tracker.change_pct_now(outcome) is None

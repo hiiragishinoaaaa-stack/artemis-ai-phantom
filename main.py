@@ -436,6 +436,7 @@ async def _process_token_checkpoint(
             creator=token.creator,
             elapsed_seconds=elapsed,
             star_count=star_count,
+            is_candidate=discord_notifier.is_trade_candidate(token, score.total),
         )
     elif action == "followup":
         logger.info(
@@ -601,6 +602,26 @@ async def _extremes_loop(outcomes: OutcomeTracker) -> None:
             # outcome_tracker.update_market_cap側で担保している)。
             if market_cap > 0:
                 outcomes.update_market_cap(outcome.mint, market_cap, now=now)
+
+        # 出口アラート。買った後に何%下げたかを知らせる唯一の経路なので、
+        # 観測のたびに確認する(discord_notifier.notify_exit_alert参照)。
+        for outcome in outcomes.due_for_exit_alert(
+            config.EXIT_ALERT_DROP_PCT, config.EXIT_ALERT_FOR_ALL_NOTIFICATIONS
+        ):
+            change = outcomes.change_pct_now(outcome)
+            if change is None:
+                continue
+            await asyncio.to_thread(
+                discord_notifier.notify_exit_alert,
+                outcome.mint, outcome.name, outcome.symbol, change, config.EXIT_ALERT_DROP_PCT,
+            )
+            outcomes.mark_exit_alert_sent(outcome)
+            logger.info(
+                "main: 出口アラートを送信しました mint=%s symbol=%s change=%.1f%%",
+                outcome.mint,
+                outcome.symbol,
+                change,
+            )
 
 
 async def _stats_loop(stats: DailyStats) -> None:

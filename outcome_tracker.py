@@ -60,6 +60,11 @@ class TrackedOutcome:
     # 最大★を持ち回ることで、★が後から付くことに意味があるのかを層別できる。
     notified_star_count: int = 0
     max_star_count: int = 0
+    # 候補(🎯)として通知したか。出口アラートの対象を絞るために使う
+    # (全通知に出すと6割以上で発火して実用にならない)。
+    is_candidate: bool = False
+    # 出口アラートを送ったか。1トークンにつき1回だけ送るためのフラグ。
+    exit_alert_sent: bool = False
     # 通知後に観測した時価総額の最安値・最高値。チェックポイントの値だけでは
     # 「途中でどこまで下がったか」が分からず、損切りを入れた場合の成績を
     # 推定でしか出せない(analyze_drawdown.py参照)。これを記録しておくと
@@ -99,6 +104,7 @@ class OutcomeTracker:
         creator: str = "",
         elapsed_seconds: int = 0,
         star_count: int = 0,
+        is_candidate: bool = False,
     ) -> None:
         """通知が発生した瞬間に1回呼び出し、結果追跡を開始する。
 
@@ -120,6 +126,7 @@ class OutcomeTracker:
             notified_elapsed_seconds=elapsed_seconds,
             notified_star_count=star_count,
             max_star_count=star_count,
+            is_candidate=is_candidate,
             min_market_cap_usd=market_cap_usd,
             max_market_cap_usd=market_cap_usd,
             last_polled_at=now,
@@ -152,6 +159,37 @@ class OutcomeTracker:
             outcome.max_market_cap_usd = market_cap_usd
         if now:
             outcome.last_polled_at = now
+
+    def change_pct_now(self, outcome: TrackedOutcome) -> float | None:
+        """通知時点から現在までの変化率(%)。基準が無ければNone。"""
+        if outcome.market_cap_at_notify_usd <= 0 or outcome.last_market_cap_usd <= 0:
+            return None
+        return (
+            (outcome.last_market_cap_usd - outcome.market_cap_at_notify_usd)
+            / outcome.market_cap_at_notify_usd
+            * 100
+        )
+
+    def due_for_exit_alert(self, drop_pct: float, all_notifications: bool) -> list[TrackedOutcome]:
+        """通知時点から drop_pct 以上下げた、まだ知らせていない対象を返す。
+
+        呼び出し側は送信後に mark_exit_alert_sent() を呼ぶこと。1トークンに
+        つき1回しか送らないため、ここでフラグは立てない(送信に失敗したら
+        次の周回で再挑戦できるようにする)。
+        """
+        due = []
+        for outcome in self._outcomes.values():
+            if outcome.exit_alert_sent:
+                continue
+            if not all_notifications and not outcome.is_candidate:
+                continue
+            change = self.change_pct_now(outcome)
+            if change is not None and change <= -abs(drop_pct):
+                due.append(outcome)
+        return due
+
+    def mark_exit_alert_sent(self, outcome: TrackedOutcome) -> None:
+        outcome.exit_alert_sent = True
 
     def due_for_extremes_poll(self, now: float, interval: float, window: float) -> list[TrackedOutcome]:
         """安値・高値の追跡のために、そろそろ値を取り直したい対象を返す。

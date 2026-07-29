@@ -266,6 +266,39 @@ def notify_star_upgrade(
 # DISCORD_TRADE_WEBHOOK_URL未設定なら何も送らない。
 
 
+def notify_exit_alert(mint: str, name: str, symbol: str, change_pct: float, drop_pct: float) -> None:
+    """候補(🎯)として通知したトークンが、通知時点から下げたことを知らせる。
+
+    今日までの測定で分かった一番大事なことは「通知条件だけでは収支が成立せず、
+    **出口が全部を決める**」だった(RESEARCH_FINDINGS.md)。それなのにbotは
+    入口しか知らせておらず、買った後に-56%まで放置される事故が起きた。
+
+    **売れとは言わない。事実だけを伝える。** 実際に売るかは人間が決める
+    (このbotは自動売買を一切行わない)。
+    """
+    url = (
+        config.DISCORD_EXIT_ALERT_WEBHOOK_URL
+        or config.DISCORD_CANDIDATE_WEBHOOK_URL
+        or config.DISCORD_WEBHOOK_URL
+    )
+    if not url:
+        return
+    label = f"{name} (${symbol})" if name and symbol else (name or f"${symbol}" or mint[:8])
+    content = (
+        f"🔻 通知時点から {change_pct:.0f}%(基準 -{drop_pct:g}%)\n"
+        f"{label}\n"
+        f"※測定では負けを-20%で打ち切れた場合だけ収支がプラスだった。"
+        f"売るかは自分で判断すること。"
+    )
+    _send(content, url, components=_build_components_for_mint(mint))
+
+
+def _build_components_for_mint(mint: str):
+    """mintしか分からない場面用のリンクボタン(DexScreener/Phantom)。"""
+    token = TrackedToken(mint=mint, name="", symbol="", migrated_at=0.0)
+    return _build_components(token)
+
+
 def notify_trade_opened(position) -> None:  # type: ignore[no-untyped-def]
     """自動購入が成功した直後に呼び出す(trade_executor.execute_buy参照)。"""
     label = f"{position.name} (${position.symbol})" if position.name else f"${position.symbol}"
